@@ -9,7 +9,7 @@ import sys
 import tkinter as tk
 from pathlib import Path
 from tkinter import ttk, scrolledtext, messagebox, simpledialog
-from typing import Dict, List, Optional, Set
+from typing import Callable, Dict, List, Optional, Set
 from dotenv import load_dotenv
 from openai import OpenAI
 import threading
@@ -409,6 +409,7 @@ class DnDMasterGUI:
                 theme=self.theme,
                 fonts=self.fonts,
                 scenario_label=scenario_label,
+                generate_callback=lambda: self._auto_generate_first_scene(scenario_label),
             )
             result = dialog.show()
             if result is None:
@@ -442,6 +443,89 @@ class DnDMasterGUI:
                     continue
 
             return scene_text
+
+    def _auto_generate_first_scene(self, scenario_label: str) -> str:
+        """Создает первую сцену при помощи модели OpenAI."""
+
+        party_data = self.party_state or {}
+        party_block = party_data.get("party", {}) if isinstance(party_data, dict) else {}
+        members = party_block.get("members", []) if isinstance(party_block, dict) else []
+        member_lines: List[str] = []
+
+        for member in members:
+            if not isinstance(member, dict):
+                continue
+            name = member.get("name", "Безымянный герой")
+            role = member.get("role", "без роли")
+            concept = member.get("concept", "").strip()
+            traits = ", ".join(member.get("traits", [])[:2]) if member.get("traits") else ""
+            loadout = ", ".join(member.get("loadout", [])[:2]) if member.get("loadout") else ""
+            summary_parts = [f"{name} — {role}"]
+            if concept:
+                summary_parts.append(concept)
+            if traits:
+                summary_parts.append(f"черты: {traits}")
+            if loadout:
+                summary_parts.append(f"снаряжение: {loadout}")
+            member_lines.append("; ".join(summary_parts))
+
+        party_tags = party_block.get("party_tags", []) if isinstance(party_block, dict) else []
+        tags_text = ", ".join(party_tags) if party_tags else "adventure"
+        resources = party_block.get("resources", {}) if isinstance(party_block, dict) else {}
+        resources_parts = []
+        for key in ("coin", "rations"):
+            value = resources.get(key)
+            if value is not None:
+                resources_parts.append(f"{key}: {value}")
+        resources_text = ", ".join(resources_parts) if resources_parts else "standard supplies"
+
+        world_context = (self.world_bible or "").strip()
+        if world_context:
+            world_context = world_context[:1500]
+
+        story_context = (self.story_arc or "").strip()
+        if story_context:
+            story_context = story_context[:1200]
+
+        party_overview = "\n".join(f"- {line}" for line in member_lines) if member_lines else "- участники будут представлены ведущим"
+
+        user_prompt = (
+            "Сгенерируй яркую первую сцену для настольной D&D-партии.\n"
+            f"Сценарий называется: {scenario_label}.\n"
+            "Игроки только что создали героев, им нужна атмосфера, место действия и цель.\n"
+            f"Состав партии:\n{party_overview}\n"
+            f"Теги команды: {tags_text}. Ресурсы: {resources_text}.\n"
+            "Требования: 4-6 предложений на живом русском языке.\n"
+            "Опиши место, громкую деталь, NPC или событие, угрозу или загадку и предложи зацепку для действия.\n"
+        )
+
+        if world_context:
+            user_prompt += "\nКонтекст мира:\n" + world_context
+        if story_context:
+            user_prompt += "\n\nФрагмент плана кампании:\n" + story_context
+
+        response = self.client.chat.completions.create(
+            model=self.models["story"],
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Ты опытный ведущий Dungeons & Dragons."
+                        " Создай кинематографичную стартовую сцену для приключения."
+                        " Учитывай состав партии и задай понятный крючок для сюжета."
+                    ),
+                },
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.85,
+            max_completion_tokens=420,
+        )
+
+        scene_text = response.choices[0].message.content.strip()
+        if not scene_text:
+            raise ValueError("модель вернула пустой ответ")
+
+        return scene_text
 
     def _generate_member_id(
         self,
@@ -1604,12 +1688,23 @@ class FirstSceneDialog:
         theme: Dict[str, str],
         fonts: Dict[str, tuple],
         scenario_label: str,
+        generate_callback: Optional[Callable[[], str]] = None,
     ) -> None:
         self.parent = parent
         self.theme = theme
         self.fonts = fonts
         self.scenario_label = scenario_label
         self.result: Optional[str] = None
+        self.generate_callback = generate_callback
+        self._is_generating = False
+        self._status_var = tk.StringVar(
+            value=(
+                "Подсказка: можно набросать сцену самостоятельно"
+                " или нажать 'Сгенерировать автоматически'."
+            )
+        )
+        self._auto_button: Optional[tk.Button] = None
+        self._save_button: Optional[tk.Button] = None
 
         self.window = tk.Toplevel(parent)
         self.window.title("Первая сцена приключения")
@@ -1759,7 +1854,25 @@ class FirstSceneDialog:
         )
         cancel_button.pack(side="left")
 
-        save_button = tk.Button(
+        self._auto_button = tk.Button(
+            buttons,
+            text="Сгенерировать автоматически",
+            command=self._on_generate,
+            font=fonts["button"],
+            bg=colors["accent"],
+            fg=colors["text_dark"],
+            activebackground=colors["accent_light"],
+            activeforeground=colors["text_dark"],
+            relief="flat",
+            bd=0,
+            cursor="hand2",
+            highlightthickness=1,
+            highlightbackground=colors["accent_muted"],
+            state="normal" if self.generate_callback else "disabled",
+        )
+        self._auto_button.pack(side="right", padx=(0, 10))
+
+        self._save_button = tk.Button(
             buttons,
             text="Сохранить сцену",
             command=self._on_save,
@@ -1774,7 +1887,18 @@ class FirstSceneDialog:
             highlightthickness=1,
             highlightbackground=colors["accent_muted"],
         )
-        save_button.pack(side="right")
+        self._save_button.pack(side="right")
+
+        status_label = tk.Label(
+            container,
+            textvariable=self._status_var,
+            bg=colors["bg_panel"],
+            fg=colors["text_muted"],
+            font=fonts["text"],
+            justify="left",
+            wraplength=640,
+        )
+        status_label.pack(anchor="w", pady=(12, 0))
 
     def _on_save(self) -> None:
         self.result = self.scene_entry.get("1.0", tk.END)
@@ -1783,6 +1907,61 @@ class FirstSceneDialog:
     def _on_cancel(self) -> None:
         self.result = None
         self.window.destroy()
+
+    def _on_generate(self) -> None:
+        if self._is_generating or not self.generate_callback:
+            return
+
+        self._is_generating = True
+        if self._auto_button:
+            self._auto_button.config(state="disabled", text="Генерация...")
+        if self._save_button:
+            self._save_button.config(state="disabled")
+        self._status_var.set("Обращаемся к нейросети за черновиком сцены...")
+
+        def worker() -> None:
+            try:
+                text = self.generate_callback()
+            except Exception as error:
+                message = str(error) or "неизвестная ошибка"
+                self.window.after(0, lambda: self._on_generation_failed(message))
+            else:
+                self.window.after(0, lambda: self._on_generation_success(text))
+
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+
+    def _on_generation_success(self, text: str) -> None:
+        self._is_generating = False
+        if self._auto_button:
+            self._auto_button.config(state="normal", text="Сгенерировать автоматически")
+        if self._save_button:
+            self._save_button.config(state="normal")
+
+        cleaned = text.strip()
+        if cleaned:
+            self.scene_entry.delete("1.0", tk.END)
+            self.scene_entry.insert(tk.END, cleaned)
+            self.scene_entry.focus_set()
+            self.scene_entry.see("end")
+
+        self._status_var.set(
+            "Черновик сцены готов. Отредактируйте детали под свою партию и нажмите 'Сохранить'."
+        )
+
+    def _on_generation_failed(self, message: str) -> None:
+        self._is_generating = False
+        if self._auto_button:
+            self._auto_button.config(state="normal", text="Сгенерировать автоматически")
+        if self._save_button:
+            self._save_button.config(state="normal")
+
+        self._status_var.set("Не удалось получить сцену автоматически. Попробуйте ещё раз или заполните поле сами.")
+        messagebox.showerror(
+            "Генерация сцены",
+            "Не удалось получить ответ от нейросети: " + message,
+            parent=self.window,
+        )
 
 
 class CharacterFormDialog:
