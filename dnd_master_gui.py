@@ -189,15 +189,19 @@ class DnDMasterGUI:
             return
 
         if payload:
-            self.party_state = payload
             scenarios = self.party_store.setdefault("scenarios", {})
-            if self.current_scenario:
-                scenarios[self.current_scenario] = payload
-            else:
-                scenarios["default"] = payload
-                self.current_scenario = "default"
+            scenario_key = self.current_scenario or "default"
+            self.current_scenario = scenario_key
+            scenarios[scenario_key] = payload
+            self.party_state = payload
             self.save_party_state()
-            self.add_to_chat("🎭 Мастер", "Стартовая партия готова. Ведущий задаёт первую сцену.")
+
+            scene_description = self._prompt_first_scene_description(scenario_key)
+            self.party_state["initial_scene"] = scene_description
+            scenarios[scenario_key] = self.party_state
+            self.save_party_state()
+
+            self.add_to_chat("🎭 Мастер", f"Начальная сцена:\n{scene_description}")
 
     def _ensure_scenario_selected(self) -> None:
         if self.current_scenario:
@@ -395,6 +399,49 @@ class DnDMasterGUI:
             if 1 <= len(tags) <= 3:
                 return tags
             messagebox.showwarning("Теги партии", "Можно указать от 1 до 3 тегов.")
+
+    def _prompt_first_scene_description(self, scenario_label: str) -> str:
+        """Запрашивает у ведущего описание стартовой сцены."""
+
+        while True:
+            dialog = FirstSceneDialog(
+                self.root,
+                theme=self.theme,
+                fonts=self.fonts,
+                scenario_label=scenario_label,
+            )
+            result = dialog.show()
+            if result is None:
+                messagebox.showwarning(
+                    "Первая сцена",
+                    (
+                        "Чтобы начать сценарий, опишите первую сцену."
+                        " Используйте пример как подсказку и заполните все поля."
+                    ),
+                )
+                continue
+
+            scene_text = result.strip()
+            if not scene_text:
+                messagebox.showwarning(
+                    "Первая сцена",
+                    "Описание не может быть пустым. Поделитесь хотя бы парой предложений.",
+                )
+                continue
+
+            if len(scene_text) < 40:
+                confirm = messagebox.askyesno(
+                    "Первая сцена",
+                    (
+                        "Описание получилось очень коротким."
+                        " Убедитесь, что игроки поймут обстановку и цель."
+                        " Сохранить как есть?"
+                    ),
+                )
+                if not confirm:
+                    continue
+
+            return scene_text
 
     def _generate_member_id(
         self,
@@ -1546,6 +1593,197 @@ class DnDMasterGUI:
     def run(self):
         """Запуск приложения"""
         self.root.mainloop()
+
+class FirstSceneDialog:
+    """Модальное окно с подсказками для описания стартовой сцены."""
+
+    def __init__(
+        self,
+        parent: tk.Tk,
+        *,
+        theme: Dict[str, str],
+        fonts: Dict[str, tuple],
+        scenario_label: str,
+    ) -> None:
+        self.parent = parent
+        self.theme = theme
+        self.fonts = fonts
+        self.scenario_label = scenario_label
+        self.result: Optional[str] = None
+
+        self.window = tk.Toplevel(parent)
+        self.window.title("Первая сцена приключения")
+        self.window.configure(bg=self.theme["bg_dark"])
+        self.window.transient(parent)
+        self.window.grab_set()
+        self.window.resizable(True, True)
+        self.window.minsize(720, 560)
+        self.window.protocol("WM_DELETE_WINDOW", self._on_cancel)
+
+        self._build_ui()
+
+    def show(self) -> Optional[str]:
+        self.window.wait_window()
+        return self.result
+
+    def _build_ui(self) -> None:
+        colors = self.theme
+        fonts = self.fonts
+
+        container = tk.Frame(
+            self.window,
+            bg=colors["bg_panel"],
+            padx=20,
+            pady=20,
+            highlightbackground=colors["accent_muted"],
+            highlightthickness=1,
+        )
+        container.pack(fill="both", expand=True, padx=24, pady=24)
+
+        title = tk.Label(
+            container,
+            text=(
+                "Опиши первую сцену для сценария "
+                f"'{self.scenario_label}'.\n"
+                "Это первое впечатление игроков, поэтому расскажи, где они,"
+                " что происходит и какая цель маячит перед ними."
+            ),
+            bg=colors["bg_panel"],
+            fg=colors["accent_light"],
+            font=fonts["subtitle"],
+            justify="left",
+            wraplength=640,
+        )
+        title.pack(anchor="w", pady=(0, 12))
+
+        tips_text = (
+            "Подсказки:\n"
+            "• Начни с места: таверна, караван, храм, лагерь археологов.\n"
+            "• Расскажи, что герои видят и слышат: шум дождя, запах дыма, толпа.\n"
+            "• Укажи триггер действия: заказчик предлагает работу, врата открываются,\n"
+            "  кто-то просит помощи.\n"
+            "• Заверши крючком или угрозой: таймер, загадка, враг на подходе."
+        )
+        tips_label = tk.Label(
+            container,
+            text=tips_text,
+            bg=colors["bg_panel"],
+            fg=colors["text_light"],
+            font=fonts["text"],
+            justify="left",
+            wraplength=640,
+        )
+        tips_label.pack(anchor="w", pady=(0, 16))
+
+        examples_title = tk.Label(
+            container,
+            text="Примеры живых открытий:",
+            bg=colors["bg_panel"],
+            fg=colors["accent_light"],
+            font=fonts["text"],
+            anchor="w",
+            justify="left",
+        )
+        examples_title.pack(anchor="w")
+
+        examples = (
+            "1) Дождливый порт. Корабль контрабандистов горит, капитан орёт:"
+            " \"Сундук в трюме! Ключ у шпиона на причале!\" Вдалеке показались стражи.\n"
+            "2) Пустынный храм. За обрушенной стеной сияет вход в гробницу."
+            " Жрец шепчет: \"Печати держат демона, но звёзды уже выстраиваются\"."
+            " Песчаная буря поднимается через три минуты.\n"
+            "3) Ярмарка в деревне. Кукольник вдруг теряет контроль над марионетками,"
+            " нитки рвутся, а дети кричат. Староста умоляет: \"В амбаре творится\""
+            " \"нечто странное, спасите мою дочь!\""
+        )
+        examples_box = scrolledtext.ScrolledText(
+            container,
+            wrap=tk.WORD,
+            height=8,
+            bg=colors["bg_card"],
+            fg=colors["text_dark"],
+            font=fonts["text"],
+            relief="flat",
+            borderwidth=0,
+            highlightthickness=0,
+        )
+        examples_box.pack(fill="x", expand=False, pady=(4, 16))
+        examples_box.insert(tk.END, examples)
+        examples_box.config(state="disabled")
+
+        prompt_label = tk.Label(
+            container,
+            text=(
+                "Теперь набросай собственную сцену (3-6 предложений)."
+                " Обозначь место, событие и цель или угрозу."
+            ),
+            bg=colors["bg_panel"],
+            fg=colors["accent_light"],
+            font=fonts["text"],
+            justify="left",
+            wraplength=640,
+        )
+        prompt_label.pack(anchor="w")
+
+        self.scene_entry = scrolledtext.ScrolledText(
+            container,
+            wrap=tk.WORD,
+            height=10,
+            bg=colors["bg_input"],
+            fg=colors["text_dark"],
+            font=fonts["text"],
+            relief="flat",
+            borderwidth=0,
+            highlightthickness=1,
+            highlightbackground=colors["accent_muted"],
+        )
+        self.scene_entry.pack(fill="both", expand=True, pady=(6, 12))
+
+        buttons = tk.Frame(container, bg=colors["bg_panel"])
+        buttons.pack(fill="x", pady=(0, 0))
+
+        cancel_button = tk.Button(
+            buttons,
+            text="Отмена",
+            command=self._on_cancel,
+            font=fonts["button"],
+            bg=colors["button_secondary"],
+            fg=colors["button_text"],
+            activebackground=colors["accent"],
+            activeforeground=colors["text_dark"],
+            relief="flat",
+            bd=0,
+            cursor="hand2",
+            highlightthickness=1,
+            highlightbackground=colors["accent_muted"],
+        )
+        cancel_button.pack(side="left")
+
+        save_button = tk.Button(
+            buttons,
+            text="Сохранить сцену",
+            command=self._on_save,
+            font=fonts["button"],
+            bg=colors["button_primary"],
+            fg=colors["button_text"],
+            activebackground=colors["accent"],
+            activeforeground=colors["text_dark"],
+            relief="flat",
+            bd=0,
+            cursor="hand2",
+            highlightthickness=1,
+            highlightbackground=colors["accent_muted"],
+        )
+        save_button.pack(side="right")
+
+    def _on_save(self) -> None:
+        self.result = self.scene_entry.get("1.0", tk.END)
+        self.window.destroy()
+
+    def _on_cancel(self) -> None:
+        self.result = None
+        self.window.destroy()
+
 
 class CharacterFormDialog:
     """Модальное окно для ввода данных персонажа на одном экране."""
