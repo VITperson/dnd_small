@@ -6,8 +6,9 @@
 import json
 import os
 import sys
-from pathlib import Path
+
 from typing import Dict, List, Optional, Set
+
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -16,6 +17,7 @@ import yaml
 import re
 from dice_system import dice_roller
 from party_builder import PartyBuilder, PartyMember, PartyValidationError
+
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -34,11 +36,11 @@ class DnDMaster:
         self.conversation_history = []
         self.world_bible = None
         self.game_rules = None
-        self.party_state_path = Path(__file__).resolve().parent / "party_state.json"
-        self.party_state_file = str(self.party_state_path)
+        self.party_state_file = "party_state.json"
         self.party_store = self.load_party_state()
         self.current_scenario: Optional[str] = None
         self.party_state: Optional[Dict[str, object]] = None
+
         
         # Загружаем правила игры
         self.load_game_rules()
@@ -77,35 +79,26 @@ class DnDMaster:
 
     def load_party_state(self) -> Dict[str, object]:
         """Load stored parties for all scenarios, migrating old format if needed."""
-        default_store: Dict[str, object] = {"scenarios": {}}
-        migrated_store: Optional[Dict[str, object]] = None
-        if self.party_state_path.exists():
+        if os.path.exists(self.party_state_file):
             try:
                 with open(self.party_state_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                 if isinstance(data, dict) and "scenarios" in data:
                     scenarios = data.get("scenarios", {})
                     if isinstance(scenarios, dict):
-                        migrated_store = {"scenarios": scenarios}
-                elif isinstance(data, dict) and "party" in data:
-                    migrated_store = {"scenarios": {"default": data}}
+                        return {"scenarios": scenarios}
+                if isinstance(data, dict) and "party" in data:
+                    return {"scenarios": {"default": data}}
             except Exception as error:
                 print(f"❌ Не удалось загрузить сохраненную партию: {error}")
-
-        store = migrated_store or default_store
-        if not self.party_state_path.exists() or migrated_store is None:
-            try:
-                with open(self.party_state_file, 'w', encoding='utf-8') as f:
-                    json.dump(store, f, ensure_ascii=False, indent=2)
-            except Exception as error:
-                print(f"❌ Не удалось создать файл хранения партий: {error}")
-        return store
+        return {"scenarios": {}}
 
     def save_party_state(self) -> None:
         """Persist all stored scenario parties to disk."""
         try:
             with open(self.party_state_file, 'w', encoding='utf-8') as f:
                 json.dump(self.party_store, f, ensure_ascii=False, indent=2)
+
         except Exception as error:
             print(f"❌ Не удалось сохранить партию: {error}")
 
@@ -119,22 +112,6 @@ class DnDMaster:
             .get("set", [])
         )
         return bool(flags and "party_initialized" in flags)
-
-    def has_saved_party_members(self) -> bool:
-        scenarios = self.party_store.get("scenarios", {})
-        if not isinstance(scenarios, dict):
-            return False
-        for payload in scenarios.values():
-            if not isinstance(payload, dict):
-                continue
-            flags = (
-                payload.get("state_delta", {})
-                .get("flags", {})
-                .get("set", [])
-            )
-            if isinstance(flags, list) and "party_initialized" in flags:
-                return True
-        return False
 
     def ensure_party_initialized(self) -> None:
         """Guide the user through party creation if no party exists."""
@@ -189,14 +166,12 @@ class DnDMaster:
         builder.coin = coin
         builder.rations = rations
         builder.party_tags = party_tags
-
         payload = builder.build_payload()
 
         json_text = json.dumps(payload, ensure_ascii=False, indent=2)
         print(json_text)
         for line in payload["party_compact"]:
             print(line)
-
         return payload
 
     def _ensure_scenario_selected(self) -> None:
@@ -213,13 +188,11 @@ class DnDMaster:
         prompt = (
             "Введите название сценария или номер из списка: "
             if scenario_names
-            else "Введите название нового сценария (по умолчанию default): "
+            else "Введите название нового сценария: "
         )
 
         while True:
             choice = input(prompt).strip()
-            if not choice and not scenario_names:
-                choice = "default"
             if not choice:
                 print("Название сценария не может быть пустым.")
                 continue
@@ -625,11 +598,6 @@ class DnDMaster:
         print("Введите ваши действия или вопросы. Для выхода введите 'quit' или 'exit'")
         print("Для просмотра Библии мира введите 'мир' или 'bible'")
         print("-" * 50)
-
-        if self.has_saved_party_members():
-            print("Обнаружены сохраненные персонажи в party_state.json.")
-        else:
-            print("Сохраненных персонажей не найдено. Запускаю мастер создания новой партии.")
 
         self.ensure_party_initialized()
 
