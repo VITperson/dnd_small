@@ -3,10 +3,13 @@
 GUI приложение для D&D мастера с использованием OpenAI API
 """
 
+import json
 import os
 import sys
 import tkinter as tk
-from tkinter import ttk, scrolledtext, messagebox
+from pathlib import Path
+from tkinter import ttk, scrolledtext, messagebox, simpledialog
+from typing import Dict, List, Optional, Set
 from dotenv import load_dotenv
 from openai import OpenAI
 import threading
@@ -14,6 +17,7 @@ import random
 import yaml
 import re
 from dice_system import dice_roller
+from party_builder import PartyBuilder, PartyMember, PartyValidationError
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -61,6 +65,11 @@ class DnDMasterGUI:
             sys.exit(1)
         
         self.client = OpenAI(api_key=self.api_key)
+        self.party_state_path = Path(__file__).resolve().parent / "party_state.json"
+        self.party_state_file = str(self.party_state_path)
+        self.party_store: Dict[str, object] = self.load_party_state()
+        self.current_scenario: Optional[str] = None
+        self.party_state: Optional[Dict[str, object]] = None
         self.conversation_history = []
         self.world_bible = None
         self.game_rules = None
@@ -88,6 +97,7 @@ class DnDMasterGUI:
         self.update_system_prompt()
         
         self.setup_ui()
+        self.root.after(0, self.ensure_party_initialized)
 
     def configure_theme(self):
         """Настраивает базовое оформление окна."""
@@ -106,7 +116,554 @@ class DnDMasterGUI:
         except Exception as e:
             print(f"❌ Ошибка при загрузке правил: {e}")
             self.game_rules = {}
-    
+
+    def load_party_state(self) -> Dict[str, object]:
+        """Загружает сохраненные партии, создавая или мигрируя хранилище при необходимости."""
+        default_store: Dict[str, object] = {"scenarios": {}}
+        migrated_store: Optional[Dict[str, object]] = None
+        if self.party_state_path.exists():
+            try:
+                with open(self.party_state_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                if isinstance(data, dict) and "scenarios" in data:
+                    scenarios = data.get("scenarios", {})
+                    if isinstance(scenarios, dict):
+                        migrated_store = {"scenarios": scenarios}
+                elif isinstance(data, dict) and "party" in data:
+                    migrated_store = {"scenarios": {"default": data}}
+            except Exception as error:
+                print(f"❌ Не удалось загрузить сохраненную партию: {error}")
+
+        store = migrated_store or default_store
+        if not self.party_state_path.exists() or migrated_store is None:
+            try:
+                with open(self.party_state_file, 'w', encoding='utf-8') as f:
+                    json.dump(store, f, ensure_ascii=False, indent=2)
+            except Exception as error:
+                print(f"❌ Не удалось создать файл хранения партий: {error}")
+        return store
+
+    def save_party_state(self) -> None:
+        """Сохраняет текущие данные партий на диск."""
+        try:
+            with open(self.party_state_file, 'w', encoding='utf-8') as f:
+                json.dump(self.party_store, f, ensure_ascii=False, indent=2)
+        except Exception as error:
+            print(f"❌ Не удалось сохранить партию: {error}")
+
+    @property
+    def party_initialized(self) -> bool:
+        if not isinstance(self.party_state, dict):
+            return False
+        flags = (
+            self.party_state.get("state_delta", {})
+            .get("flags", {})
+            .get("set", [])
+        )
+        return bool(flags and "party_initialized" in flags)
+
+    def ensure_party_initialized(self) -> None:
+        """Запускает создание партии при отсутствии сохраненных персонажей."""
+        self._ensure_scenario_selected()
+        if self.party_initialized:
+            messagebox.showinfo(
+                "Партия загружена",
+                f"Сценарий '{self.current_scenario}' уже содержит сохраненных персонажей."
+            )
+            return
+
+        scenario_name = self.current_scenario or "default"
+        messagebox.showinfo(
+            "Создание персонажей",
+            f"Для сценария '{scenario_name}' не найдены сохраненные персонажи. Создадим их сейчас."
+        )
+
+        try:
+            payload = self._run_party_creation_flow()
+        except PartyValidationError as error:
+            messagebox.showerror(
+                "Ошибка валидации",
+                f"Не удалось создать партию: {error}"
+            )
+            return
+
+        if payload:
+            self.party_state = payload
+            scenarios = self.party_store.setdefault("scenarios", {})
+            if self.current_scenario:
+                scenarios[self.current_scenario] = payload
+            else:
+                scenarios["default"] = payload
+                self.current_scenario = "default"
+            self.save_party_state()
+            self.add_to_chat("🎭 Мастер", "Стартовая партия готова. Ведущий задаёт первую сцену.")
+
+    def _ensure_scenario_selected(self) -> None:
+        if self.current_scenario:
+            return
+
+        scenarios = self.party_store.get("scenarios", {})
+        scenario_names = list(scenarios.keys())
+
+        prompt_lines = []
+        if scenario_names:
+            prompt_lines.append("Доступные сценарии:")
+            for idx, name in enumerate(scenario_names, start=1):
+                prompt_lines.append(f"{idx}. {name}")
+            prompt_lines.append("")
+            prompt_lines.append("Введите название сценария или номер из списка.")
+        else:
+            prompt_lines.append("Введите название нового сценария (по умолчанию default).")
+
+        while True:
+            choice = simpledialog.askstring(
+                "Выбор сценария",
+                "\n".join(prompt_lines),
+                parent=self.root
+            )
+            if choice is None:
+                if scenario_names:
+                    messagebox.showwarning("Сценарий", "Необходимо выбрать сценарий для продолжения игры.")
+                    continue
+                choice = "default"
+
+            choice = choice.strip()
+            if not choice:
+                if scenario_names:
+                    messagebox.showwarning("Сценарий", "Название сценария не может быть пустым.")
+                    continue
+                choice = "default"
+
+            if scenario_names and choice.isdigit():
+                index = int(choice)
+                if 1 <= index <= len(scenario_names):
+                    self.current_scenario = scenario_names[index - 1]
+                    break
+                messagebox.showwarning("Сценарий", "Укажите корректный номер из списка.")
+                continue
+
+            self.current_scenario = choice
+            break
+
+        if self.current_scenario in scenarios:
+            stored = scenarios[self.current_scenario]
+            if isinstance(stored, dict):
+                self.party_state = stored
+
+    def _run_party_creation_flow(self) -> Dict[str, object]:
+        scenario_label = self.current_scenario or "новый сценарий"
+        builder = PartyBuilder()
+        party_size = self._prompt_party_size()
+        existing_ids: Set[str] = set()
+
+        for index in range(1, party_size + 1):
+            messagebox.showinfo("Персонаж", f"Заполнение данных для персонажа {index} из {party_size}.")
+            member = self._collect_member_data(index, existing_ids)
+            builder.add_member(member)
+            existing_ids.add(member.id)
+
+        coin = self._prompt_optional_int(
+            (
+                "Сколько монет у партии? (по умолчанию 0)\n"
+                "Подсказка: монеты отражают общий кошелёк группы.\n"
+                "Если не уверены, смело введите 0 или ориентируйтесь на примеры:\n"
+                "0 — нищая группа; 10 — есть немного серебра; 25 — приличная сумма."
+            ),
+            minimum=0,
+            default=0,
+        )
+        rations = self._prompt_optional_int(
+            (
+                "Сколько пайков у партии? (по умолчанию 0)\n"
+                "Пайки — запас готовой еды на день для всей группы.\n"
+                "Примеры: 0 — предстоит искать пропитание; 3 — еда на пару дней; 7 — серьёзные запасы."
+            ),
+            minimum=0,
+            default=0,
+        )
+        party_tags = self._prompt_party_tags()
+
+        builder.coin = coin
+        builder.rations = rations
+        builder.party_tags = party_tags
+
+        payload = builder.build_payload()
+
+        json_text = json.dumps(payload, ensure_ascii=False, indent=2)
+        print(json_text)
+        for line in payload["party_compact"]:
+            print(line)
+
+        self._show_party_summary(json_text, payload["party_compact"], scenario_label)
+
+        return payload
+
+    def _prompt_party_size(self) -> int:
+        while True:
+            value = simpledialog.askinteger(
+                "Размер партии",
+                (
+                    "Сколько персонажей будет в этом сценарии? (1-3)\n"
+                    "Пояснение: в этой истории можно вести от одного до трёх героев.\n"
+                    "1 — сольный герой; 2 — дуэт с разделением ролей; 3 — полноценная команда."
+                ),
+                parent=self.root,
+                minvalue=1,
+                maxvalue=3,
+            )
+            if value is None:
+                messagebox.showwarning("Размер партии", "Укажите количество персонажей от 1 до 3.")
+                continue
+            return value
+
+    def _collect_member_data(self, index: int, existing_ids: Set[str]) -> PartyMember:
+        name = self._prompt_non_empty(
+            (
+                "Имя персонажа\n"
+                "Что нужно: короткое и запоминающееся имя или прозвище героя.\n"
+                "Совет: подберите звучание, которое подходит настроению фантазийного мира.\n"
+                "Примеры: Арин, Лисса, Мракозор, Ная Ночная-Птица, Бронн Каменный-Кулак."
+            )
+        )
+        role = self._prompt_non_empty(
+            (
+                "Роль персонажа\n"
+                "Что нужно: коротко опиши, чем герой помогает группе.\n"
+                "Пояснение: это может быть бой, поддержка, магия, знания или социальные навыки.\n"
+                "Примеры: разведчик, лекарь, мечник, мудрый наставник, скрытный стрелок, маг поддержки."
+            )
+        )
+        concept = self._prompt_non_empty(
+            (
+                "Концепт героя\n"
+                "Что нужно: одна фраза о происхождении и мотивации персонажа.\n"
+                "Совет: используйте формулу 'кто он + чего хочет'.\n"
+                "Примеры: изгнанный дворянин в поиске искупления;\n"
+                "деревенская травница, мечтающая доказать свою ценность;\n"
+                "бывший солдат, охраняющий друзей любой ценой."
+            )
+        )
+
+        stats: Dict[str, int] = {}
+        stat_order = [
+            ("str", "Сила"),
+            ("dex", "Ловкость"),
+            ("int", "Интеллект"),
+            ("wit", "Сообразительность"),
+            ("charm", "Обаяние"),
+        ]
+        for key, label in stat_order:
+            stats[key] = self._prompt_int(
+                (
+                    f"{label} (от -1 до +3)\n"
+                    "Объяснение: -1 — заметная слабость, 0 — обычный человек, +3 — легендарный талант.\n"
+                    "Подумайте, как герой действует в сценах, и выберите подходящее число.\n"
+                    "Примеры распределения:\n"
+                    "  Силач: STR 3, DEX 1, INT 0, WIT 0, CHARM -1\n"
+                    "  Ловкач: STR 0, DEX 3, INT 1, WIT 1, CHARM 0\n"
+                    "  Дипломат: STR -1, DEX 0, INT 1, WIT 2, CHARM 3"
+                ),
+                minimum=-1,
+                maximum=3,
+            )
+
+        hp = self._prompt_int(
+            (
+                "Очки здоровья (HP) (8-14)\n"
+                "Пояснение: 8 — хрупкий персонаж, 10 — средний уровень, 14 — выдающаяся стойкость.\n"
+                "Совет: бойцы ближнего боя обычно берут 12-14, учёные и маги — 8-10."
+            ),
+            minimum=8,
+            maximum=14,
+        )
+
+        traits = self._prompt_fixed_list(
+            (
+                "Черты характера (ровно 2, через запятую)\n"
+                "Что нужно: короткие слова, описывающие поведение героя.\n"
+                "Совет: соедините противоположности или подчеркните особенности.\n"
+                "Примеры: хладнокровный, благородный; язвительный, преданный; веселый, суеверный."
+            ),
+            expected_count=2,
+        )
+        loadout = self._prompt_fixed_list(
+            (
+                "Стартовое снаряжение (ровно 2 предмета, через запятую)\n"
+                "Что нужно: вещи, которые герой берёт в первое приключение.\n"
+                "Совет: сочетайте оружие, инструменты, памятные вещи.\n"
+                "Примеры: короткий меч, верёвка; травяной набор, посох; арбалет, набор отмычек."
+            ),
+            expected_count=2,
+        )
+        tags = self._prompt_tags(
+            (
+                "Теги персонажа (1-2, через запятую)\n"
+                "Объяснение: английские ключевые слова, обозначающие стиль игры героя.\n"
+                "Примеры направлений: stealth, healer, scholar, combat, support, arcane, nature, leader.\n"
+                "Выберите 1-2 слова, которые лучше всего описывают навыки персонажа."
+            ),
+            minimum=1,
+            maximum=2,
+        )
+
+        member_id = self._generate_member_id(name, existing_ids, index)
+
+        return PartyMember(
+            id=member_id,
+            name=name,
+            role=role,
+            concept=concept,
+            stats=stats,
+            traits=traits,
+            loadout=loadout,
+            hp=hp,
+            tags=tags,
+        )
+
+    def _prompt_non_empty(self, prompt: str) -> str:
+        while True:
+            value = simpledialog.askstring("Создание персонажа", prompt, parent=self.root)
+            if value is None or not value.strip():
+                messagebox.showwarning("Обязательное поле", "Это поле обязательно для заполнения.")
+                continue
+            return value.strip()
+
+    def _prompt_int(
+        self,
+        prompt: str,
+        *,
+        minimum: Optional[int] = None,
+        maximum: Optional[int] = None,
+    ) -> int:
+        while True:
+            value = simpledialog.askinteger(
+                "Создание персонажа",
+                prompt,
+                parent=self.root,
+                minvalue=minimum,
+                maxvalue=maximum,
+            )
+            if value is None:
+                messagebox.showwarning("Обязательное поле", "Нужно ввести допустимое число.")
+                continue
+            return value
+
+    def _prompt_optional_int(
+        self,
+        prompt: str,
+        *,
+        minimum: Optional[int] = None,
+        maximum: Optional[int] = None,
+        default: int = 0,
+    ) -> int:
+        while True:
+            raw = simpledialog.askstring("Ресурсы партии", prompt, parent=self.root)
+            if raw is None:
+                return default
+            raw = raw.strip()
+            if not raw:
+                return default
+            try:
+                value = int(raw)
+            except ValueError:
+                messagebox.showwarning("Ресурсы партии", "Введите целое число или оставьте поле пустым.")
+                continue
+            if minimum is not None and value < minimum:
+                messagebox.showwarning("Ресурсы партии", f"Число не может быть меньше {minimum}.")
+                continue
+            if maximum is not None and value > maximum:
+                messagebox.showwarning("Ресурсы партии", f"Число не может быть больше {maximum}.")
+                continue
+            return value
+
+    def _prompt_fixed_list(self, prompt: str, *, expected_count: int) -> List[str]:
+        while True:
+            raw = simpledialog.askstring("Создание персонажа", prompt, parent=self.root)
+            if raw is None:
+                messagebox.showwarning(
+                    "Создание персонажа",
+                    f"Нужно указать ровно {expected_count} элемента(ов)."
+                )
+                continue
+            items = [item.strip() for item in re.split(r'[;,/]+', raw) if item.strip()]
+            if len(items) == expected_count:
+                return items
+            messagebox.showwarning(
+                "Создание персонажа",
+                f"Нужно указать ровно {expected_count} элемента(ов)."
+            )
+
+    def _prompt_tags(
+        self,
+        prompt: str,
+        *,
+        minimum: int,
+        maximum: int,
+    ) -> List[str]:
+        while True:
+            raw = simpledialog.askstring("Создание персонажа", prompt, parent=self.root)
+            if raw is None:
+                messagebox.showwarning(
+                    "Создание персонажа",
+                    f"Нужно указать от {minimum} до {maximum} тегов."
+                )
+                continue
+            items = [item.strip() for item in re.split(r'[;,]+', raw) if item.strip()]
+            if minimum <= len(items) <= maximum:
+                return items
+            messagebox.showwarning(
+                "Создание персонажа",
+                f"Нужно указать от {minimum} до {maximum} тегов."
+            )
+
+    def _prompt_party_tags(self) -> List[str]:
+        prompt = (
+            "Опиши стиль партии тегами (1-3, через запятую, по умолчанию adventure)\n"
+            "Пояснение: теги — короткие английские слова, которые передают атмосферу приключения.\n"
+            "Примеры сочетаний: stealth, mystery, intrigue; combat, heroic, justice; exploration, social, discovery."
+        )
+        while True:
+            raw = simpledialog.askstring("Теги партии", prompt, parent=self.root)
+            if raw is None:
+                return ["adventure"]
+            raw = raw.strip()
+            if not raw:
+                return ["adventure"]
+            tags = [item.strip() for item in re.split(r'[;,]+', raw) if item.strip()]
+            if 1 <= len(tags) <= 3:
+                return tags
+            messagebox.showwarning("Теги партии", "Можно указать от 1 до 3 тегов.")
+
+    def _generate_member_id(
+        self,
+        name: str,
+        existing_ids: Set[str],
+        index: int,
+    ) -> str:
+        base = self._slugify_tag(name) or f"pc_{index}"
+        candidate = f"pc_{base}" if not base.startswith("pc_") else base
+        suffix = 1
+        final_id = candidate
+        while final_id in existing_ids:
+            suffix += 1
+            final_id = f"{candidate}_{suffix}"
+        return final_id
+
+    def _slugify_tag(self, text: str) -> str:
+        translit_map = {
+            'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'e',
+            'ж': 'zh', 'з': 'z', 'и': 'i', 'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm',
+            'н': 'n', 'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u',
+            'ф': 'f', 'х': 'h', 'ц': 'c', 'ч': 'ch', 'ш': 'sh', 'щ': 'sch', 'ъ': '',
+            'ы': 'y', 'ь': '', 'э': 'e', 'ю': 'yu', 'я': 'ya'
+        }
+        result = []
+        for char in text.lower():
+            if char in translit_map:
+                result.append(translit_map[char])
+            elif char.isalnum() and char.isascii():
+                result.append(char)
+        slug = ''.join(result)
+        slug = re.sub(r'[^a-z0-9]+', '', slug)
+        return slug
+
+    def _show_party_summary(self, json_text: str, compact_lines: List[str], scenario_label: str) -> None:
+        colors = self.theme
+        fonts = self.fonts
+
+        window = tk.Toplevel(self.root)
+        window.title("Стартовая партия создана")
+        window.configure(bg=colors["bg_dark"])
+
+        container = tk.Frame(
+            window,
+            bg=colors["bg_panel"],
+            highlightbackground=colors["accent_muted"],
+            highlightthickness=1,
+            bd=0,
+            padx=15,
+            pady=15
+        )
+        container.pack(fill='both', expand=True, padx=20, pady=20)
+
+        title = tk.Label(
+            container,
+            text=f"Партия для сценария '{scenario_label}' создана",
+            font=fonts["subtitle"],
+            bg=colors["bg_panel"],
+            fg=colors["accent_light"]
+        )
+        title.pack(pady=(0, 10))
+
+        json_label = tk.Label(
+            container,
+            text="JSON шаблон:",
+            font=fonts["text"],
+            bg=colors["bg_panel"],
+            fg=colors["accent_light"]
+        )
+        json_label.pack(anchor='w')
+
+        json_box = scrolledtext.ScrolledText(
+            container,
+            wrap=tk.WORD,
+            width=80,
+            height=12,
+            font=fonts["text"],
+            bg=colors["bg_card"],
+            fg=colors["text_dark"],
+            relief='flat',
+            borderwidth=0,
+            highlightthickness=0
+        )
+        json_box.pack(fill='both', expand=True, pady=(4, 12))
+        json_box.insert(tk.END, json_text)
+        json_box.config(state='disabled')
+
+        compact_label = tk.Label(
+            container,
+            text="Краткий список:",
+            font=fonts["text"],
+            bg=colors["bg_panel"],
+            fg=colors["accent_light"]
+        )
+        compact_label.pack(anchor='w')
+
+        compact_box = scrolledtext.ScrolledText(
+            container,
+            wrap=tk.WORD,
+            width=80,
+            height=6,
+            font=fonts["text"],
+            bg=colors["bg_card"],
+            fg=colors["text_dark"],
+            relief='flat',
+            borderwidth=0,
+            highlightthickness=0
+        )
+        compact_box.pack(fill='x', expand=False, pady=(4, 12))
+        compact_box.insert(tk.END, "\n".join(compact_lines))
+        compact_box.config(state='disabled')
+
+        close_button = tk.Button(
+            container,
+            text="Закрыть",
+            command=window.destroy,
+            font=fonts["button"],
+            bg=colors["button_primary"],
+            fg=colors["button_text"],
+            activebackground=colors["accent"],
+            activeforeground=colors["text_dark"],
+            relief='flat',
+            bd=0,
+            cursor='hand2',
+            highlightthickness=1,
+            highlightbackground=colors["accent_muted"],
+            padx=12,
+            pady=6
+        )
+        close_button.pack(pady=(0, 5))
+
     def initialize_world_bible(self):
         """Инициализация или загрузка Библии мира"""
         bible_file = "world_bible.md"
