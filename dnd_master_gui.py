@@ -1573,6 +1573,7 @@ class CharacterFormDialog:
         self.window.grab_set()
         self.window.resizable(True, True)
         self.window.minsize(760, 720)
+        self._scroll_bindings: List[tuple[str, Optional[str]]] = []
         self.window.protocol("WM_DELETE_WINDOW", self._prevent_close)
 
         self.name_var = tk.StringVar()
@@ -1635,15 +1636,64 @@ class CharacterFormDialog:
         colors = self.theme
         fonts = self.fonts
 
+        outer = tk.Frame(self.window, bg=colors["bg_dark"])
+        outer.pack(fill="both", expand=True, padx=0, pady=0)
+
+        canvas = tk.Canvas(
+            outer,
+            bg=colors["bg_dark"],
+            highlightthickness=0,
+            bd=0,
+        )
+        canvas.pack(side="left", fill="both", expand=True)
+
+        scrollbar = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        scrollbar.pack(side="right", fill="y")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
         container = tk.Frame(
-            self.window,
+            canvas,
             bg=colors["bg_panel"],
             padx=20,
             pady=20,
             highlightbackground=colors["accent_muted"],
             highlightthickness=1,
         )
-        container.pack(fill="both", expand=True, padx=16, pady=16)
+        container_window = canvas.create_window((0, 0), window=container, anchor="nw")
+
+        def _update_scroll_region(event: tk.Event) -> None:
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            canvas.itemconfigure(container_window, width=event.width)
+
+        container.bind("<Configure>", _update_scroll_region)
+
+        def _on_canvas_resize(event: tk.Event) -> None:
+            canvas.itemconfigure(container_window, width=event.width)
+
+        canvas.bind("<Configure>", _on_canvas_resize)
+
+        def _bind_scroll_events(target: tk.Widget) -> None:
+            def _on_mousewheel(event: tk.Event) -> None:
+                if event.delta:
+                    canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+            def _on_button4(_: tk.Event) -> None:
+                canvas.yview_scroll(-3, "units")
+
+            def _on_button5(_: tk.Event) -> None:
+                canvas.yview_scroll(3, "units")
+
+            sequences = [
+                ("<MouseWheel>", _on_mousewheel),
+                ("<Button-4>", _on_button4),
+                ("<Button-5>", _on_button5),
+            ]
+            for sequence, callback in sequences:
+                binding = target.bind_all(sequence, callback, add="+")
+                self._scroll_bindings.append((sequence, binding))
+
+        _bind_scroll_events(canvas)
+        self.window.bind("<Destroy>", lambda _event: self._cleanup_scroll_events(), add="+")
 
         intro_text = (
             "Все этапы создания героя собраны на одном экране.\n"
@@ -2103,6 +2153,16 @@ class CharacterFormDialog:
             "Для продолжения заполните анкету и нажмите 'Сохранить персонажа'.",
             parent=self.window,
         )
+
+    def _cleanup_scroll_events(self) -> None:
+        if not getattr(self, "_scroll_bindings", None):
+            return
+        for sequence, _binding in self._scroll_bindings:
+            try:
+                self.window.unbind_all(sequence)
+            except tk.TclError:
+                continue
+        self._scroll_bindings.clear()
 
 def main():
     """Точка входа в приложение"""
