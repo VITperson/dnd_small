@@ -1,0 +1,21 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+.env
+.venv/
+venv/
+
+# Editor/IDE
+.vscode/
+.idea/
+
+# OS junk
+.DS_Store
+
+# Local data generated at runtime
+world_bible.md
+story_arc.md
