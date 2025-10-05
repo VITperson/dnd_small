@@ -97,6 +97,7 @@ class DnDMasterGUI:
         self.update_system_prompt()
         
         self.setup_ui()
+        self.stat_points_limit = 6
         self.root.after(0, self.ensure_party_initialized)
 
     def configure_theme(self):
@@ -257,7 +258,14 @@ class DnDMasterGUI:
         existing_ids: Set[str] = set()
 
         for index in range(1, party_size + 1):
-            messagebox.showinfo("Персонаж", f"Заполнение данных для персонажа {index} из {party_size}.")
+            messagebox.showinfo(
+                "Персонаж",
+                (
+                    f"Заполнение данных для персонажа {index} из {party_size}.\n"
+                    "Следующий экран объединяет все шаги: имя, роль, концепт, характеристики, черты, снаряжение и теги.\n"
+                    "Можно вводить данные в любом порядке, но продолжить получится только после заполнения всех полей."
+                ),
+            )
             member = self._collect_member_data(index, existing_ids)
             builder.add_member(member)
             existing_ids.add(member.id)
@@ -317,136 +325,30 @@ class DnDMasterGUI:
             return value
 
     def _collect_member_data(self, index: int, existing_ids: Set[str]) -> PartyMember:
-        name = self._prompt_non_empty(
-            (
-                "Имя персонажа\n"
-                "Что нужно: короткое и запоминающееся имя или прозвище героя.\n"
-                "Совет: подберите звучание, которое подходит настроению фантазийного мира.\n"
-                "Примеры: Арин, Лисса, Мракозор, Ная Ночная-Птица, Бронн Каменный-Кулак."
-            )
-        )
-        role = self._prompt_non_empty(
-            (
-                "Роль персонажа\n"
-                "Что нужно: коротко опиши, чем герой помогает группе.\n"
-                "Пояснение: это может быть бой, поддержка, магия, знания или социальные навыки.\n"
-                "Примеры: разведчик, лекарь, мечник, мудрый наставник, скрытный стрелок, маг поддержки."
-            )
-        )
-        concept = self._prompt_non_empty(
-            (
-                "Концепт героя\n"
-                "Что нужно: одна фраза о происхождении и мотивации персонажа.\n"
-                "Совет: используйте формулу 'кто он + чего хочет'.\n"
-                "Примеры: изгнанный дворянин в поиске искупления;\n"
-                "деревенская травница, мечтающая доказать свою ценность;\n"
-                "бывший солдат, охраняющий друзей любой ценой."
-            )
-        )
-
-        stats: Dict[str, int] = {}
-        stat_order = [
-            ("str", "Сила"),
-            ("dex", "Ловкость"),
-            ("int", "Интеллект"),
-            ("wit", "Сообразительность"),
-            ("charm", "Обаяние"),
-        ]
-        for key, label in stat_order:
-            stats[key] = self._prompt_int(
-                (
-                    f"{label} (от -1 до +3)\n"
-                    "Объяснение: -1 — заметная слабость, 0 — обычный человек, +3 — легендарный талант.\n"
-                    "Подумайте, как герой действует в сценах, и выберите подходящее число.\n"
-                    "Примеры распределения:\n"
-                    "  Силач: STR 3, DEX 1, INT 0, WIT 0, CHARM -1\n"
-                    "  Ловкач: STR 0, DEX 3, INT 1, WIT 1, CHARM 0\n"
-                    "  Дипломат: STR -1, DEX 0, INT 1, WIT 2, CHARM 3"
-                ),
-                minimum=-1,
-                maximum=3,
-            )
-
-        hp = self._prompt_int(
-            (
-                "Очки здоровья (HP) (8-14)\n"
-                "Пояснение: 8 — хрупкий персонаж, 10 — средний уровень, 14 — выдающаяся стойкость.\n"
-                "Совет: бойцы ближнего боя обычно берут 12-14, учёные и маги — 8-10."
-            ),
-            minimum=8,
-            maximum=14,
-        )
-
-        traits = self._prompt_fixed_list(
-            (
-                "Черты характера (ровно 2, через запятую)\n"
-                "Что нужно: короткие слова, описывающие поведение героя.\n"
-                "Совет: соедините противоположности или подчеркните особенности.\n"
-                "Примеры: хладнокровный, благородный; язвительный, преданный; веселый, суеверный."
-            ),
-            expected_count=2,
-        )
-        loadout = self._prompt_fixed_list(
-            (
-                "Стартовое снаряжение (ровно 2 предмета, через запятую)\n"
-                "Что нужно: вещи, которые герой берёт в первое приключение.\n"
-                "Совет: сочетайте оружие, инструменты, памятные вещи.\n"
-                "Примеры: короткий меч, верёвка; травяной набор, посох; арбалет, набор отмычек."
-            ),
-            expected_count=2,
-        )
-        tags = self._prompt_tags(
-            (
-                "Теги персонажа (1-2, через запятую)\n"
-                "Объяснение: английские ключевые слова, обозначающие стиль игры героя.\n"
-                "Примеры направлений: stealth, healer, scholar, combat, support, arcane, nature, leader.\n"
-                "Выберите 1-2 слова, которые лучше всего описывают навыки персонажа."
-            ),
-            minimum=1,
-            maximum=2,
-        )
-
-        member_id = self._generate_member_id(name, existing_ids, index)
-
-        return PartyMember(
-            id=member_id,
-            name=name,
-            role=role,
-            concept=concept,
-            stats=stats,
-            traits=traits,
-            loadout=loadout,
-            hp=hp,
-            tags=tags,
-        )
-
-    def _prompt_non_empty(self, prompt: str) -> str:
         while True:
-            value = simpledialog.askstring("Создание персонажа", prompt, parent=self.root)
-            if value is None or not value.strip():
-                messagebox.showwarning("Обязательное поле", "Это поле обязательно для заполнения.")
-                continue
-            return value.strip()
-
-    def _prompt_int(
-        self,
-        prompt: str,
-        *,
-        minimum: Optional[int] = None,
-        maximum: Optional[int] = None,
-    ) -> int:
-        while True:
-            value = simpledialog.askinteger(
-                "Создание персонажа",
-                prompt,
-                parent=self.root,
-                minvalue=minimum,
-                maxvalue=maximum,
+            dialog = CharacterFormDialog(
+                self.root,
+                index=index,
+                theme=self.theme,
+                fonts=self.fonts,
+                stats_limit=self.stat_points_limit,
             )
-            if value is None:
-                messagebox.showwarning("Обязательное поле", "Нужно ввести допустимое число.")
+            result = dialog.show()
+            if result is None:
                 continue
-            return value
+
+            member_id = self._generate_member_id(result["name"], existing_ids, index)
+            return PartyMember(
+                id=member_id,
+                name=result["name"],
+                role=result["role"],
+                concept=result["concept"],
+                stats=result["stats"],
+                traits=result["traits"],
+                loadout=result["loadout"],
+                hp=result["hp"],
+                tags=result["tags"],
+            )
 
     def _prompt_optional_int(
         self,
@@ -475,46 +377,6 @@ class DnDMasterGUI:
                 messagebox.showwarning("Ресурсы партии", f"Число не может быть больше {maximum}.")
                 continue
             return value
-
-    def _prompt_fixed_list(self, prompt: str, *, expected_count: int) -> List[str]:
-        while True:
-            raw = simpledialog.askstring("Создание персонажа", prompt, parent=self.root)
-            if raw is None:
-                messagebox.showwarning(
-                    "Создание персонажа",
-                    f"Нужно указать ровно {expected_count} элемента(ов)."
-                )
-                continue
-            items = [item.strip() for item in re.split(r'[;,/]+', raw) if item.strip()]
-            if len(items) == expected_count:
-                return items
-            messagebox.showwarning(
-                "Создание персонажа",
-                f"Нужно указать ровно {expected_count} элемента(ов)."
-            )
-
-    def _prompt_tags(
-        self,
-        prompt: str,
-        *,
-        minimum: int,
-        maximum: int,
-    ) -> List[str]:
-        while True:
-            raw = simpledialog.askstring("Создание персонажа", prompt, parent=self.root)
-            if raw is None:
-                messagebox.showwarning(
-                    "Создание персонажа",
-                    f"Нужно указать от {minimum} до {maximum} тегов."
-                )
-                continue
-            items = [item.strip() for item in re.split(r'[;,]+', raw) if item.strip()]
-            if minimum <= len(items) <= maximum:
-                return items
-            messagebox.showwarning(
-                "Создание персонажа",
-                f"Нужно указать от {minimum} до {maximum} тегов."
-            )
 
     def _prompt_party_tags(self) -> List[str]:
         prompt = (
@@ -1684,6 +1546,563 @@ class DnDMasterGUI:
     def run(self):
         """Запуск приложения"""
         self.root.mainloop()
+
+class CharacterFormDialog:
+    """Модальное окно для ввода данных персонажа на одном экране."""
+
+    def __init__(
+        self,
+        parent: tk.Tk,
+        *,
+        index: int,
+        theme: Dict[str, str],
+        fonts: Dict[str, tuple],
+        stats_limit: int,
+    ) -> None:
+        self.parent = parent
+        self.theme = theme
+        self.fonts = fonts
+        self.stats_limit = stats_limit
+        self.index = index
+        self.result: Optional[Dict[str, object]] = None
+
+        self.window = tk.Toplevel(parent)
+        self.window.title(f"Персонаж {index}: анкета героя")
+        self.window.configure(bg=self.theme["bg_dark"])
+        self.window.transient(parent)
+        self.window.grab_set()
+        self.window.resizable(True, True)
+        self.window.minsize(760, 720)
+        self.window.protocol("WM_DELETE_WINDOW", self._prevent_close)
+
+        self.name_var = tk.StringVar()
+        self.role_var = tk.StringVar()
+        self.concept_var = tk.StringVar()
+        self.hp_var = tk.IntVar(value=10)
+        self.trait_vars = [tk.StringVar(), tk.StringVar()]
+        self.loadout_vars = [tk.StringVar(), tk.StringVar()]
+        self.tags_var = tk.StringVar()
+
+        self.stats_order = [
+            (
+                "str",
+                "Сила (STR)",
+                "Как герой справляется с тяжёлой работой и ближним боем."
+                " Примеры: рыцарь, наёмник, защитник деревни.",
+            ),
+            (
+                "dex",
+                "Ловкость (DEX)",
+                "Ответственна за точные действия, меткость и акробатику."
+                " Примеры: охотник, вор, следопыт.",
+            ),
+            (
+                "int",
+                "Интеллект (INT)",
+                "Показывает знания, учёность и умение планировать."
+                " Примеры: мудрец, артефактор, маг-теоретик.",
+            ),
+            (
+                "wit",
+                "Сообразительность (WIT)",
+                "Реакция, смекалка и умение быстро находить решения."
+                " Примеры: следователь, авантюрист, механик.",
+            ),
+            (
+                "charm",
+                "Обаяние (CHARM)",
+                "Харизма, лидерство и влияние на окружающих."
+                " Примеры: дипломат, бард, вдохновляющий капитан.",
+            ),
+        ]
+
+        self.stats_vars: Dict[str, tk.IntVar] = {
+            key: tk.IntVar(value=0) for key, *_ in self.stats_order
+        }
+        for var in self.stats_vars.values():
+            var.trace_add("write", self._on_stat_change)
+
+        self.points_label: Optional[tk.Label] = None
+        self._build_ui()
+        self._on_stat_change()
+
+    def show(self) -> Optional[Dict[str, object]]:
+        """Показывает окно и возвращает заполненные данные."""
+        self.window.wait_window()
+        return self.result
+
+    def _build_ui(self) -> None:
+        colors = self.theme
+        fonts = self.fonts
+
+        container = tk.Frame(
+            self.window,
+            bg=colors["bg_panel"],
+            padx=20,
+            pady=20,
+            highlightbackground=colors["accent_muted"],
+            highlightthickness=1,
+        )
+        container.pack(fill="both", expand=True, padx=16, pady=16)
+
+        intro_text = (
+            "Все этапы создания героя собраны на одном экране.\n"
+            "Заполните поля в любом порядке: имя, роль, концепт, характеристики, черты, снаряжение и теги.\n"
+            "Чтобы избежать дисбаланса, распределите до"
+            f" {self.stats_limit} очков между характеристиками (значения от -1 до +3).\n"
+            "Пример готового героя: Лисса Тенистая — ловкий разведчик,"
+            " стремится доказать, что может защитить друзей."
+        )
+        intro = tk.Label(
+            container,
+            text=intro_text,
+            bg=colors["bg_panel"],
+            fg=colors["text_light"],
+            font=fonts["text"],
+            justify="left",
+            wraplength=680,
+        )
+        intro.pack(anchor="w")
+
+        general_frame = self._make_section(container, "Основные сведения")
+        self.name_entry = self._add_entry(
+            general_frame,
+            "Имя героя",
+            (
+                "Выберите звучное имя или прозвище."
+                " Примеры: Арин Храбрый, Мирра Шепот-Ручья,"
+                " Торвальд Молот, Зоя Искра, Рин Седой-Ветер."
+            ),
+            self.name_var,
+        )
+        self._add_entry(
+            general_frame,
+            "Роль в команде",
+            (
+                "Коротко опишите вклад героя."
+                " Примеры: разведчик, целитель, мечник, защитник, охотник за знаниями,"
+                " вдохновляющий лидер."
+            ),
+            self.role_var,
+        )
+        self._add_entry(
+            general_frame,
+            "Концепт и мотивация",
+            (
+                "Опишите героя одной фразой: происхождение + стремление."
+                " Примеры: 'Изгнанный рыцарь ищет искупления',"
+                " 'Деревенская травница хочет доказать ценность',"
+                " 'Бывший солдат оберегает друзей любой ценой'."
+            ),
+            self.concept_var,
+        )
+
+        stats_frame = self._make_section(container, "Характеристики")
+        stats_hint = tk.Label(
+            stats_frame,
+            text=(
+                "Каждый показатель показывает сильные и слабые стороны героя."
+                " Все значения должны оставаться в диапазоне от -1 до +3.\n"
+                "Распределите до"
+                f" {self.stats_limit} очков. Примеры готовых сетов:\n"
+                "  • Силач-страж: STR 3, DEX 1, INT 0, WIT 0, CHARM -1\n"
+                "  • Ловкий разведчик: STR 0, DEX 3, INT 1, WIT 1, CHARM 0\n"
+                "  • Дипломат: STR -1, DEX 0, INT 1, WIT 2, CHARM 3"
+            ),
+            bg=colors["bg_panel"],
+            fg=colors["text_light"],
+            font=fonts["text"],
+            justify="left",
+            wraplength=680,
+        )
+        stats_hint.pack(anchor="w", pady=(4, 6))
+
+        for key, label, description in self.stats_order:
+            row = tk.Frame(stats_frame, bg=colors["bg_panel"])
+            row.pack(fill="x", pady=3)
+            label_widget = tk.Label(
+                row,
+                text=label,
+                bg=colors["bg_panel"],
+                fg=colors["accent_light"],
+                font=fonts["text"],
+                width=18,
+                anchor="w",
+            )
+            label_widget.pack(side="left")
+
+            spin = tk.Spinbox(
+                row,
+                from_=-1,
+                to=3,
+                textvariable=self.stats_vars[key],
+                width=5,
+                justify="center",
+                bg=colors["bg_input"],
+                fg=colors["text_dark"],
+                insertbackground=colors["text_dark"],
+            )
+            spin.pack(side="left", padx=6)
+
+            desc_label = tk.Label(
+                row,
+                text=description,
+                bg=colors["bg_panel"],
+                fg=colors["text_light"],
+                font=fonts["text"],
+                justify="left",
+                wraplength=480,
+            )
+            desc_label.pack(side="left", fill="x", expand=True)
+
+        self.points_label = tk.Label(
+            stats_frame,
+            bg=colors["bg_panel"],
+            fg=colors["accent_light"],
+            font=fonts["text"],
+            anchor="w",
+            justify="left",
+        )
+        self.points_label.pack(fill="x", pady=(6, 0))
+
+        hp_frame = self._make_section(container, "Очки здоровья (HP)")
+        hp_hint = tk.Label(
+            hp_frame,
+            text=(
+                "Выберите значение от 8 до 14.\n"
+                "8 — герой хрупкий и должен избегать прямых ударов.\n"
+                "10 — средняя стойкость. 12-14 — закалённый боец или опытный выживший."
+            ),
+            bg=colors["bg_panel"],
+            fg=colors["text_light"],
+            font=fonts["text"],
+            justify="left",
+            wraplength=680,
+        )
+        hp_hint.pack(anchor="w", pady=(4, 4))
+
+        hp_row = tk.Frame(hp_frame, bg=colors["bg_panel"])
+        hp_row.pack(anchor="w", pady=(0, 4))
+        hp_label = tk.Label(
+            hp_row,
+            text="HP",
+            bg=colors["bg_panel"],
+            fg=colors["accent_light"],
+            font=fonts["text"],
+        )
+        hp_label.pack(side="left")
+        hp_spin = tk.Spinbox(
+            hp_row,
+            from_=8,
+            to=14,
+            textvariable=self.hp_var,
+            width=5,
+            justify="center",
+            bg=colors["bg_input"],
+            fg=colors["text_dark"],
+            insertbackground=colors["text_dark"],
+        )
+        hp_spin.pack(side="left", padx=6)
+
+        traits_frame = self._make_section(container, "Черты характера")
+        traits_hint = tk.Label(
+            traits_frame,
+            text=(
+                "Заполните две короткие черты, которые раскрывают характер героя.\n"
+                "Примеры пар: хладнокровный и благородный; язвительный и преданный;"
+                " весёлый и суеверный; честный и упрямый."
+            ),
+            bg=colors["bg_panel"],
+            fg=colors["text_light"],
+            font=fonts["text"],
+            justify="left",
+            wraplength=680,
+        )
+        traits_hint.pack(anchor="w", pady=(4, 4))
+
+        traits_row = tk.Frame(traits_frame, bg=colors["bg_panel"])
+        traits_row.pack(fill="x")
+        for var in self.trait_vars:
+            entry = tk.Entry(
+                traits_row,
+                textvariable=var,
+                bg=colors["bg_input"],
+                fg=colors["text_dark"],
+                insertbackground=colors["text_dark"],
+            )
+            entry.pack(side="left", fill="x", expand=True, padx=4, pady=2)
+
+        loadout_frame = self._make_section(container, "Стартовое снаряжение")
+        loadout_hint = tk.Label(
+            loadout_frame,
+            text=(
+                "Укажите два предмета, с которыми герой выходит в приключение.\n"
+                "Сочетайте оружие, инструменты и памятные мелочи.\n"
+                "Примеры: короткий меч и верёвка; травяной набор и посох;"
+                " арбалет и набор отмычек; семейный амулет и дорожный плащ."
+            ),
+            bg=colors["bg_panel"],
+            fg=colors["text_light"],
+            font=fonts["text"],
+            justify="left",
+            wraplength=680,
+        )
+        loadout_hint.pack(anchor="w", pady=(4, 4))
+
+        loadout_row = tk.Frame(loadout_frame, bg=colors["bg_panel"])
+        loadout_row.pack(fill="x")
+        for var in self.loadout_vars:
+            entry = tk.Entry(
+                loadout_row,
+                textvariable=var,
+                bg=colors["bg_input"],
+                fg=colors["text_dark"],
+                insertbackground=colors["text_dark"],
+            )
+            entry.pack(side="left", fill="x", expand=True, padx=4, pady=2)
+
+        tags_frame = self._make_section(container, "Игровые теги")
+        tags_hint = tk.Label(
+            tags_frame,
+            text=(
+                "Напишите 1-2 английских тега, которые описывают стиль героя в игре.\n"
+                "Подсказки: stealth (скрытность), combat (бой), social (общение),"
+                " healer, scholar, arcane, support, leader, survival, nature."
+            ),
+            bg=colors["bg_panel"],
+            fg=colors["text_light"],
+            font=fonts["text"],
+            justify="left",
+            wraplength=680,
+        )
+        tags_hint.pack(anchor="w", pady=(4, 4))
+
+        tags_entry = tk.Entry(
+            tags_frame,
+            textvariable=self.tags_var,
+            bg=colors["bg_input"],
+            fg=colors["text_dark"],
+            insertbackground=colors["text_dark"],
+        )
+        tags_entry.pack(fill="x", padx=4, pady=(0, 4))
+
+        submit_button = tk.Button(
+            container,
+            text="Сохранить персонажа",
+            command=self._on_submit,
+            font=fonts["button"],
+            bg=colors["button_primary"],
+            fg=colors["button_text"],
+            activebackground=colors["accent"],
+            activeforeground=colors["text_dark"],
+            relief="flat",
+            bd=0,
+            cursor="hand2",
+            padx=16,
+            pady=8,
+        )
+        submit_button.pack(pady=(12, 0))
+
+        self.name_entry.focus_set()
+        self.window.bind("<Return>", self._submit_event)
+
+    def _make_section(self, parent: tk.Widget, title: str) -> tk.Frame:
+        frame = tk.Frame(parent, bg=self.theme["bg_panel"])
+        frame.pack(fill="x", pady=(16, 4))
+        heading = tk.Label(
+            frame,
+            text=title,
+            bg=self.theme["bg_panel"],
+            fg=self.theme["accent_light"],
+            font=self.fonts["subtitle"],
+            anchor="w",
+        )
+        heading.pack(anchor="w")
+        return frame
+
+    def _add_entry(
+        self,
+        parent: tk.Widget,
+        label_text: str,
+        hint_text: str,
+        variable: tk.StringVar,
+    ) -> tk.Entry:
+        wrapper = tk.Frame(parent, bg=self.theme["bg_panel"])
+        wrapper.pack(fill="x", pady=(6, 2))
+        label = tk.Label(
+            wrapper,
+            text=label_text,
+            bg=self.theme["bg_panel"],
+            fg=self.theme["accent_light"],
+            font=self.fonts["text"],
+            anchor="w",
+        )
+        label.pack(anchor="w")
+        entry = tk.Entry(
+            wrapper,
+            textvariable=variable,
+            bg=self.theme["bg_input"],
+            fg=self.theme["text_dark"],
+            insertbackground=self.theme["text_dark"],
+        )
+        entry.pack(fill="x", padx=4, pady=(2, 0))
+        hint = tk.Label(
+            wrapper,
+            text=hint_text,
+            bg=self.theme["bg_panel"],
+            fg=self.theme["text_light"],
+            font=self.fonts["text"],
+            justify="left",
+            wraplength=680,
+        )
+        hint.pack(anchor="w", padx=4, pady=(1, 0))
+        return entry
+
+    def _on_stat_change(self, *args) -> None:
+        total = 0
+        for key, var in self.stats_vars.items():
+            try:
+                value = int(var.get())
+            except (tk.TclError, ValueError):
+                value = 0
+            if value < -1:
+                var.set(-1)
+                value = -1
+            if value > 3:
+                var.set(3)
+                value = 3
+            total += value
+
+        remaining = self.stats_limit - total
+        if self.points_label is not None:
+            if total > self.stats_limit:
+                text = (
+                    f"Использовано {total} очков. Уменьшите показатели,"
+                    f" чтобы уложиться в лимит {self.stats_limit}."
+                )
+                color = self.theme["button_danger"]
+            else:
+                text = (
+                    f"Использовано {total} из {self.stats_limit} очков."
+                    f" Осталось {remaining}."
+                )
+                color = self.theme["accent_light"]
+            self.points_label.config(text=text, fg=color)
+
+    def _submit_event(self, event) -> None:  # type: ignore[override]
+        self._on_submit()
+
+    def _on_submit(self) -> None:
+        name = self.name_var.get().strip()
+        if not name:
+            messagebox.showwarning(
+                "Создание персонажа",
+                "Введите имя героя. Для вдохновения используйте подсказки выше.",
+                parent=self.window,
+            )
+            return
+
+        role = self.role_var.get().strip()
+        if not role:
+            messagebox.showwarning(
+                "Создание персонажа",
+                "Укажите роль героя в группе (например, разведчик или маг поддержки).",
+                parent=self.window,
+            )
+            return
+
+        concept = self.concept_var.get().strip()
+        if not concept:
+            messagebox.showwarning(
+                "Создание персонажа",
+                "Заполните краткий концепт: происхождение + цель героя.",
+                parent=self.window,
+            )
+            return
+
+        stats: Dict[str, int] = {}
+        total = 0
+        for key, _label, _desc in self.stats_order:
+            try:
+                value = int(self.stats_vars[key].get())
+            except (ValueError, tk.TclError):
+                value = 0
+            if value < -1 or value > 3:
+                messagebox.showwarning(
+                    "Характеристики",
+                    "Каждая характеристика должна быть в диапазоне от -1 до +3.",
+                    parent=self.window,
+                )
+                return
+            stats[key] = value
+            total += value
+
+        if total > self.stats_limit:
+            messagebox.showwarning(
+                "Характеристики",
+                (
+                    f"Вы распределили {total} очков."
+                    f" Уменьшите один из показателей, чтобы уложиться в лимит {self.stats_limit}."
+                ),
+                parent=self.window,
+            )
+            return
+
+        hp = int(self.hp_var.get())
+        if hp < 8 or hp > 14:
+            messagebox.showwarning(
+                "Очки здоровья",
+                "HP должны быть в пределах от 8 до 14.",
+                parent=self.window,
+            )
+            return
+
+        traits = [var.get().strip() for var in self.trait_vars]
+        if any(not trait for trait in traits):
+            messagebox.showwarning(
+                "Черты характера",
+                "Заполните обе черты. Используйте короткие описательные слова.",
+                parent=self.window,
+            )
+            return
+
+        loadout = [var.get().strip() for var in self.loadout_vars]
+        if any(not item for item in loadout):
+            messagebox.showwarning(
+                "Снаряжение",
+                "Укажите два предмета стартового набора героя.",
+                parent=self.window,
+            )
+            return
+
+        tags_raw = self.tags_var.get().strip()
+        tags = [item.strip() for item in re.split(r"[;,]+", tags_raw) if item.strip()]
+        if not (1 <= len(tags) <= 2):
+            messagebox.showwarning(
+                "Игровые теги",
+                "Нужно указать 1 или 2 тега, например stealth, combat, support.",
+                parent=self.window,
+            )
+            return
+
+        self.result = {
+            "name": name,
+            "role": role,
+            "concept": concept,
+            "stats": stats,
+            "hp": hp,
+            "traits": traits,
+            "loadout": loadout,
+            "tags": tags,
+        }
+        self.window.destroy()
+
+    def _prevent_close(self) -> None:
+        messagebox.showwarning(
+            "Создание персонажа",
+            "Для продолжения заполните анкету и нажмите 'Сохранить персонажа'.",
+            parent=self.window,
+        )
 
 def main():
     """Точка входа в приложение"""
