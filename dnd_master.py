@@ -6,7 +6,9 @@
 import json
 import os
 import sys
-from typing import Dict, List
+
+from typing import Dict, List, Optional, Set
+
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -16,128 +18,6 @@ import re
 from dice_system import dice_roller
 from party_builder import PartyBuilder, PartyMember, PartyValidationError
 
-
-CANDIDATE_LIBRARY: List[Dict[str, object]] = [
-    {
-        "id": "shadow",
-        "pitch": "shadow - скрытный разведчик, терпеливый наблюдатель",
-        "style_focus": ["stealth", "exploration"],
-        "tone_bias": ["neutral", "chaotic"],
-        "member": {
-            "id": "pc_shadow",
-            "name": "Тенар",
-            "role": "Разведчик",
-            "concept": "тихий ловчий",
-            "stats": {"str": 0, "dex": 3, "int": 1, "wit": 2, "charm": 0},
-            "traits": ["скрытный", "терпеливый"],
-            "loadout": ["кинжал", "теневой плащ"],
-            "hp": 10,
-            "tags": ["stealth", "scout"],
-        },
-    },
-    {
-        "id": "warden",
-        "pitch": "warden - внимательный следопыт, преданный защитник",
-        "style_focus": ["exploration", "combat"],
-        "tone_bias": ["lawful", "neutral"],
-        "member": {
-            "id": "pc_warden",
-            "name": "Эллин",
-            "role": "Следопыт",
-            "concept": "сторож границ",
-            "stats": {"str": 1, "dex": 2, "int": 0, "wit": 2, "charm": 0},
-            "traits": ["наблюдательный", "верный"],
-            "loadout": ["лук", "набор следопыта"],
-            "hp": 12,
-            "tags": ["explorer", "guardian"],
-        },
-    },
-    {
-        "id": "silver",
-        "pitch": "silver - утонченный дипломат, чуткий эмпат",
-        "style_focus": ["social"],
-        "tone_bias": ["lawful", "neutral"],
-        "member": {
-            "id": "pc_silver",
-            "name": "Марис",
-            "role": "Дипломат",
-            "concept": "тонкий переговорщик",
-            "stats": {"str": -1, "dex": 1, "int": 2, "wit": 1, "charm": 3},
-            "traits": ["харизматичный", "внимательный"],
-            "loadout": ["шпага", "плащ посредника"],
-            "hp": 9,
-            "tags": ["face", "support"],
-        },
-    },
-    {
-        "id": "ember",
-        "pitch": "ember - решительный дуэлянт, пламенный маг",
-        "style_focus": ["combat"],
-        "tone_bias": ["chaotic", "neutral"],
-        "member": {
-            "id": "pc_ember",
-            "name": "Айрин",
-            "role": "Боевой маг",
-            "concept": "стихийный боец",
-            "stats": {"str": 1, "dex": 1, "int": 2, "wit": 0, "charm": 0},
-            "traits": ["пламенный", "решительный"],
-            "loadout": ["клинок", "огненный фокус"],
-            "hp": 11,
-            "tags": ["combat", "caster"],
-        },
-    },
-    {
-        "id": "sage",
-        "pitch": "sage - любознательный ученый, вдумчивый стратег",
-        "style_focus": ["exploration", "social"],
-        "tone_bias": ["lawful", "neutral"],
-        "member": {
-            "id": "pc_sage",
-            "name": "Калем",
-            "role": "Знаток",
-            "concept": "искатель знаний",
-            "stats": {"str": -1, "dex": 1, "int": 3, "wit": 2, "charm": 0},
-            "traits": ["рассудительный", "вдумчивый"],
-            "loadout": ["том знаний", "компас"],
-            "hp": 9,
-            "tags": ["lore", "planner"],
-        },
-    },
-    {
-        "id": "lotus",
-        "pitch": "lotus - спокойный целитель, мудрый наставник",
-        "style_focus": ["social", "exploration"],
-        "tone_bias": ["lawful", "neutral"],
-        "member": {
-            "id": "pc_lotus",
-            "name": "Сайя",
-            "role": "Целитель",
-            "concept": "миротворец",
-            "stats": {"str": 0, "dex": 0, "int": 2, "wit": 1, "charm": 2},
-            "traits": ["сочувствующий", "сдержанный"],
-            "loadout": ["посох", "лечебные травы"],
-            "hp": 10,
-            "tags": ["healer", "support"],
-        },
-    },
-    {
-        "id": "hammer",
-        "pitch": "hammer - стойкий воин, прямолинейный защитник",
-        "style_focus": ["combat"],
-        "tone_bias": ["lawful", "neutral"],
-        "member": {
-            "id": "pc_hammer",
-            "name": "Бранн",
-            "role": "Воин",
-            "concept": "щит группы",
-            "stats": {"str": 3, "dex": 0, "int": 0, "wit": 1, "charm": -1},
-            "traits": ["несгибаемый", "прямой"],
-            "loadout": ["боевой молот", "щит"],
-            "hp": 14,
-            "tags": ["tank", "frontline"],
-        },
-    },
-]
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -157,7 +37,10 @@ class DnDMaster:
         self.world_bible = None
         self.game_rules = None
         self.party_state_file = "party_state.json"
-        self.party_state = self.load_party_state()
+        self.party_store = self.load_party_state()
+        self.current_scenario: Optional[str] = None
+        self.party_state: Optional[Dict[str, object]] = None
+
         
         # Загружаем правила игры
         self.load_game_rules()
@@ -194,29 +77,37 @@ class DnDMaster:
             print(f"❌ Ошибка при загрузке правил: {e}")
             self.game_rules = {}
 
-    def load_party_state(self) -> Dict[str, object] | None:
-        """Load stored party state if it exists."""
+    def load_party_state(self) -> Dict[str, object]:
+        """Load stored parties for all scenarios, migrating old format if needed."""
         if os.path.exists(self.party_state_file):
             try:
                 with open(self.party_state_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
+                    data = json.load(f)
+                if isinstance(data, dict) and "scenarios" in data:
+                    scenarios = data.get("scenarios", {})
+                    if isinstance(scenarios, dict):
+                        return {"scenarios": scenarios}
+                if isinstance(data, dict) and "party" in data:
+                    return {"scenarios": {"default": data}}
             except Exception as error:
                 print(f"❌ Не удалось загрузить сохраненную партию: {error}")
-        return None
+        return {"scenarios": {}}
 
-    def save_party_state(self, payload: Dict[str, object]) -> None:
-        """Persist the created party state to disk."""
+    def save_party_state(self) -> None:
+        """Persist all stored scenario parties to disk."""
         try:
             with open(self.party_state_file, 'w', encoding='utf-8') as f:
-                json.dump(payload, f, ensure_ascii=False, indent=2)
+                json.dump(self.party_store, f, ensure_ascii=False, indent=2)
+
         except Exception as error:
             print(f"❌ Не удалось сохранить партию: {error}")
 
     @property
     def party_initialized(self) -> bool:
+        if not isinstance(self.party_state, dict):
+            return False
         flags = (
-            self.party_state
-            and self.party_state.get("state_delta", {})
+            self.party_state.get("state_delta", {})
             .get("flags", {})
             .get("set", [])
         )
@@ -224,8 +115,9 @@ class DnDMaster:
 
     def ensure_party_initialized(self) -> None:
         """Guide the user through party creation if no party exists."""
+        self._ensure_scenario_selected()
         if self.party_initialized:
-            print("Партия уже инициализирована.")
+            print("Партия уже инициализирована для выбранного сценария.")
             return
 
         try:
@@ -239,90 +131,253 @@ class DnDMaster:
 
         if payload:
             self.party_state = payload
-            self.save_party_state(payload)
+            scenarios = self.party_store.setdefault("scenarios", {})
+            if self.current_scenario:
+                scenarios[self.current_scenario] = payload
+            self.save_party_state()
+            print("\nПартия готова. Ведущий может начинать первую сцену.")
 
     def _run_party_creation_flow(self) -> Dict[str, object]:
-        print("Перед стартом соберем стартовую партию.")
+        scenario_label = self.current_scenario or "новый сценарий"
+        print(f"Создаем стартовую команду для сценария: {scenario_label}")
 
-        style = self._prompt_option(
-            "Выбери стиль игры (stealth/combat/social/exploration): ",
-            ["stealth", "combat", "social", "exploration"],
+        party_size = self._prompt_party_size()
+        builder = PartyBuilder()
+        existing_ids: Set[str] = set()
+
+        for index in range(1, party_size + 1):
+            print(f"\nПерсонаж {index} из {party_size}:")
+            member = self._collect_member_data(index, existing_ids)
+            builder.add_member(member)
+            existing_ids.add(member.id)
+
+        coin = self._prompt_optional_int(
+            "Сколько монет у партии? (по умолчанию 0): ",
+            minimum=0,
+            default=0,
         )
-        tone = self._prompt_option(
-            "Выбери моральный тон (lawful/neutral/chaotic): ",
-            ["lawful", "neutral", "chaotic"],
+        rations = self._prompt_optional_int(
+            "Сколько пайков у партии? (по умолчанию 0): ",
+            minimum=0,
+            default=0,
         )
-        taboo = input("Есть ли табу или нежелательные темы? ").strip()
+        party_tags = self._prompt_party_tags()
 
-        tags = self._build_preference_tags(style, tone, taboo)
-        candidates = self._select_candidates(style, tone, tags)
-
-        print("\nПредлагаю кандидатов, выбери от одного до трех (id через пробел):")
-        for candidate in candidates:
-            print(candidate["pitch"])
-
-        chosen_ids = self._prompt_candidate_selection([c["id"] for c in candidates])
-
-        builder = PartyBuilder(party_tags=tags[:3])
-        for candidate in candidates:
-            if candidate["id"] in chosen_ids:
-                member = PartyMember(**candidate["member"])  # type: ignore[arg-type]
-                builder.add_member(member)
-
+        builder.coin = coin
+        builder.rations = rations
+        builder.party_tags = party_tags
         payload = builder.build_payload()
 
         json_text = json.dumps(payload, ensure_ascii=False, indent=2)
         print(json_text)
         for line in payload["party_compact"]:
             print(line)
-
         return payload
 
-    def _prompt_option(self, prompt: str, options: List[str]) -> str:
-        options_lower = [opt.lower() for opt in options]
+    def _ensure_scenario_selected(self) -> None:
+        if self.current_scenario:
+            return
+
+        scenarios = self.party_store.get("scenarios", {})
+        scenario_names = list(scenarios.keys())
+        if scenario_names:
+            print("\nДоступные сценарии:")
+            for idx, name in enumerate(scenario_names, start=1):
+                print(f"  {idx}. {name}")
+
+        prompt = (
+            "Введите название сценария или номер из списка: "
+            if scenario_names
+            else "Введите название нового сценария: "
+        )
+
         while True:
-            answer = input(prompt).strip().lower()
-            if answer in options_lower:
-                return answer
-            print(f"Введите одно из: {', '.join(options_lower)}")
+            choice = input(prompt).strip()
+            if not choice:
+                print("Название сценария не может быть пустым.")
+                continue
 
-    def _prompt_candidate_selection(self, valid_ids: List[str]) -> List[str]:
-        valid = set(valid_ids)
+            if scenario_names and choice.isdigit():
+                index = int(choice)
+                if 1 <= index <= len(scenario_names):
+                    self.current_scenario = scenario_names[index - 1]
+                    break
+                print("Укажите корректный номер из списка.")
+                continue
+
+            self.current_scenario = choice
+            break
+
+        if self.current_scenario in scenarios:
+            stored = scenarios[self.current_scenario]
+            if isinstance(stored, dict):
+                self.party_state = stored
+
+    def _prompt_party_size(self) -> int:
         while True:
-            raw = input("Ваш выбор: ").strip().lower()
-            choices = [part for part in re.split(r'[\s,;]+', raw) if part]
-            unique = []
-            for item in choices:
-                if item not in unique:
-                    unique.append(item)
-            if 1 <= len(unique) <= 3 and all(choice in valid for choice in unique):
-                return unique
-            print("Нужно выбрать от одного до трех кандидатов из списка.")
+            raw = input("Сколько персонажей будет в этом сценарии? (1-3): ").strip()
+            if not raw:
+                print("Нужно ввести число от 1 до 3.")
+                continue
+            if raw.isdigit():
+                value = int(raw)
+                if 1 <= value <= 3:
+                    return value
+            print("Количество персонажей должно быть от 1 до 3.")
 
-    def _build_preference_tags(self, style: str, tone: str, taboo: str) -> List[str]:
-        tags: List[str] = [style.lower(), f"tone_{tone.lower()}"]
-        taboo_tags = self._taboo_to_tags(taboo)
-        for tag in taboo_tags:
-            if tag not in tags:
-                tags.append(tag)
-            if len(tags) == 5:
-                break
-        while len(tags) < 3:
-            tags.append("focus_team")
-        return tags[:5]
+    def _collect_member_data(self, index: int, existing_ids: Set[str]) -> PartyMember:
+        name = self._prompt_non_empty("Имя персонажа: ")
+        role = self._prompt_non_empty("Роль персонажа: ")
+        concept = self._prompt_non_empty("Коротко о концепте: ")
 
-    def _taboo_to_tags(self, taboo: str) -> List[str]:
-        if not taboo:
-            return ["no_topics"]
-        chunks = re.split(r'[,;\/\\\s]+', taboo.lower())
-        tags: List[str] = []
-        for chunk in chunks:
-            slug = self._slugify_tag(chunk)
-            if slug and slug not in tags:
-                tags.append(f"no_{slug}")
-            if len(tags) >= 3:
-                break
-        return tags or ["no_topics"]
+        stats: Dict[str, int] = {}
+        stat_order = [
+            ("str", "Сила"),
+            ("dex", "Ловкость"),
+            ("int", "Интеллект"),
+            ("wit", "Сообразительность"),
+            ("charm", "Обаяние"),
+        ]
+        for key, label in stat_order:
+            stats[key] = self._prompt_int(
+                f"{label} ({-1} до {3}): ",
+                minimum=-1,
+                maximum=3,
+            )
+
+        hp = self._prompt_int("HP (8-14): ", minimum=8, maximum=14)
+
+        traits = self._prompt_fixed_list(
+            "Укажи две черты характера (через запятую): ",
+            expected_count=2,
+        )
+        loadout = self._prompt_fixed_list(
+            "Укажи два предмета стартового снаряжения (через запятую): ",
+            expected_count=2,
+        )
+        tags = self._prompt_tags(
+            "Укажи 1-2 тега персонажа (через запятую): ",
+            minimum=1,
+            maximum=2,
+        )
+
+        member_id = self._generate_member_id(name, existing_ids, index)
+
+        return PartyMember(
+            id=member_id,
+            name=name,
+            role=role,
+            concept=concept,
+            stats=stats,
+            traits=traits,
+            loadout=loadout,
+            hp=hp,
+            tags=tags,
+        )
+
+    def _prompt_non_empty(self, prompt: str) -> str:
+        while True:
+            value = input(prompt).strip()
+            if value:
+                return value
+            print("Поле не может быть пустым.")
+
+    def _prompt_int(
+        self,
+        prompt: str,
+        *,
+        minimum: Optional[int] = None,
+        maximum: Optional[int] = None,
+    ) -> int:
+        while True:
+            raw = input(prompt).strip()
+            try:
+                value = int(raw)
+            except ValueError:
+                print("Введите целое число.")
+                continue
+            if minimum is not None and value < minimum:
+                print(f"Число не может быть меньше {minimum}.")
+                continue
+            if maximum is not None and value > maximum:
+                print(f"Число не может быть больше {maximum}.")
+                continue
+            return value
+
+    def _prompt_optional_int(
+        self,
+        prompt: str,
+        *,
+        minimum: Optional[int] = None,
+        maximum: Optional[int] = None,
+        default: int = 0,
+    ) -> int:
+        while True:
+            raw = input(prompt).strip()
+            if not raw:
+                return default
+            try:
+                value = int(raw)
+            except ValueError:
+                print("Введите целое число или оставьте строку пустой.")
+                continue
+            if minimum is not None and value < minimum:
+                print(f"Число не может быть меньше {minimum}.")
+                continue
+            if maximum is not None and value > maximum:
+                print(f"Число не может быть больше {maximum}.")
+                continue
+            return value
+
+    def _prompt_fixed_list(self, prompt: str, *, expected_count: int) -> List[str]:
+        while True:
+            raw = input(prompt).strip()
+            items = [item.strip() for item in re.split(r'[;,/]+', raw) if item.strip()]
+            if len(items) == expected_count:
+                return items
+            print(f"Нужно указать ровно {expected_count} элемента(ов).")
+
+    def _prompt_tags(
+        self,
+        prompt: str,
+        *,
+        minimum: int,
+        maximum: int,
+    ) -> List[str]:
+        while True:
+            raw = input(prompt).strip()
+            items = [item.strip() for item in re.split(r'[;,]+', raw) if item.strip()]
+            if minimum <= len(items) <= maximum:
+                return items
+            print(f"Нужно указать от {minimum} до {maximum} тегов.")
+
+    def _prompt_party_tags(self) -> List[str]:
+        prompt = (
+            "Опиши стиль партии тегами (до 3, через запятую, по умолчанию adventure): "
+        )
+        while True:
+            raw = input(prompt).strip()
+            if not raw:
+                return ["adventure"]
+            tags = [item.strip() for item in re.split(r'[;,]+', raw) if item.strip()]
+            if 1 <= len(tags) <= 3:
+                return tags
+            print("Можно указать от 1 до 3 тегов.")
+
+    def _generate_member_id(
+        self,
+        name: str,
+        existing_ids: Set[str],
+        index: int,
+    ) -> str:
+        base = self._slugify_tag(name) or f"pc_{index}"
+        candidate = f"pc_{base}" if not base.startswith("pc_") else base
+        suffix = 1
+        final_id = candidate
+        while final_id in existing_ids:
+            suffix += 1
+            final_id = f"{candidate}_{suffix}"
+        return final_id
 
     def _slugify_tag(self, text: str) -> str:
         translit_map = {
@@ -341,22 +396,6 @@ class DnDMaster:
         slug = ''.join(result)
         slug = re.sub(r'[^a-z0-9]+', '', slug)
         return slug
-
-    def _select_candidates(self, style: str, tone: str, tags: List[str]) -> List[Dict[str, object]]:
-        scored: List[tuple[int, Dict[str, object]]] = []
-        for candidate in CANDIDATE_LIBRARY:
-            score = 0
-            if style in candidate.get("style_focus", []):
-                score += 3
-            if tone in candidate.get("tone_bias", []):
-                score += 2
-            member_tags = candidate.get("member", {}).get("tags", [])  # type: ignore[union-attr]
-            if any(tag in member_tags for tag in tags):
-                score += 1
-            scored.append((score, candidate))
-
-        scored.sort(key=lambda item: (-item[0], item[1]["id"]))
-        return [item[1] for item in scored[:5]]
 
     def initialize_world_bible(self):
         """Инициализация или загрузка Библии мира"""
