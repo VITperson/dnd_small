@@ -78,6 +78,7 @@ class DnDMasterGUI:
         self.session_mode = "new"
         self.story_status_message = ""
         self.last_error_message = ""
+        self.active_dice_challenge: Optional[Dict[str, object]] = None
         self.models = {
             "world": os.getenv("DND_WORLD_MODEL", "gpt-4o-mini"),
             "story": os.getenv("DND_STORY_MODEL", "gpt-4o-mini"),
@@ -92,10 +93,13 @@ class DnDMasterGUI:
 
         # Инициализируем сюжет приключения
         self.initialize_story_arc()
-        
+
         # Системный промпт для D&D мастера
         self.update_system_prompt()
-        
+
+        self.challenge_desc_var = tk.StringVar(value="")
+        self.challenge_target_var = tk.StringVar(value="")
+        self.challenge_hint_var = tk.StringVar(value="")
         self.setup_ui()
         self.stat_points_limit = 6
         self.root.after(0, self.ensure_party_initialized)
@@ -1051,6 +1055,8 @@ class DnDMasterGUI:
         )
         button_frame.pack(fill='x', padx=5, pady=5)
 
+        self.challenge_result_var = tk.StringVar(value="")
+
         self.input_text = tk.Text(
             button_frame,
             height=3,
@@ -1145,6 +1151,24 @@ class DnDMasterGUI:
         )
         self.dice_button.pack(pady=2)
 
+        self.challenge_button = tk.Button(
+            buttons_frame,
+            text="Проверка",
+            command=self.show_dice_challenge_dialog,
+            font=fonts["button"],
+            bg=colors["accent"],
+            fg=colors["text_dark"],
+            activebackground=colors["accent_light"],
+            activeforeground=colors["text_dark"],
+            relief='flat',
+            bd=0,
+            width=12,
+            cursor='hand2',
+            highlightthickness=1,
+            highlightbackground=colors["accent_muted"]
+        )
+        self.challenge_button.pack(pady=2)
+
         self.exit_button = tk.Button(
             buttons_frame,
             text="Выход",
@@ -1165,7 +1189,126 @@ class DnDMasterGUI:
         
         # Привязываем Enter для отправки сообщения
         self.input_text.bind('<Control-Return>', lambda e: self.send_message())
-        
+
+        self.challenge_frame = tk.Frame(
+            input_frame,
+            bg=colors["bg_panel"],
+            highlightbackground=colors["accent_muted"],
+            highlightthickness=1,
+            bd=0,
+            padx=12,
+            pady=12,
+        )
+        self.challenge_frame.pack(fill='x', padx=5, pady=(8, 0))
+
+        header = tk.Label(
+            self.challenge_frame,
+            text="Активная проверка:",
+            font=fonts["subtitle"],
+            bg=colors["bg_panel"],
+            fg=colors["accent_light"],
+            anchor='w',
+        )
+        header.pack(anchor='w')
+
+        self.challenge_desc_label = tk.Label(
+            self.challenge_frame,
+            textvariable=self.challenge_desc_var,
+            font=fonts["text"],
+            bg=colors["bg_panel"],
+            fg=colors["text_light"],
+            justify='left',
+            wraplength=640,
+        )
+        self.challenge_desc_label.pack(anchor='w', pady=(4, 2))
+
+        self.challenge_target_label = tk.Label(
+            self.challenge_frame,
+            textvariable=self.challenge_target_var,
+            font=fonts["text"],
+            bg=colors["bg_panel"],
+            fg=colors["accent_light"],
+            justify='left',
+            wraplength=640,
+        )
+        self.challenge_target_label.pack(anchor='w', pady=(0, 4))
+
+        self.challenge_hint_label = tk.Label(
+            self.challenge_frame,
+            textvariable=self.challenge_hint_var,
+            font=fonts["text"],
+            bg=colors["bg_panel"],
+            fg=colors["text_muted"],
+            justify='left',
+            wraplength=640,
+        )
+        self.challenge_hint_label.pack(anchor='w', pady=(0, 6))
+
+        entry_wrapper = tk.Frame(self.challenge_frame, bg=colors["bg_panel"])
+        entry_wrapper.pack(fill='x', pady=(4, 4))
+
+        entry_label = tk.Label(
+            entry_wrapper,
+            text="Введи итог броска (с учётом модификаторов):",
+            font=fonts["text"],
+            bg=colors["bg_panel"],
+            fg=colors["accent_light"],
+        )
+        entry_label.pack(anchor='w')
+
+        self.challenge_result_entry = tk.Entry(
+            entry_wrapper,
+            textvariable=self.challenge_result_var,
+            font=fonts["text"],
+            bg=colors["bg_input"],
+            fg=colors["text_dark"],
+            insertbackground=colors["text_dark"],
+            relief='flat',
+            highlightthickness=1,
+            highlightbackground=colors["accent_muted"],
+            highlightcolor=colors["accent"],
+        )
+        self.challenge_result_entry.pack(fill='x', pady=(4, 0))
+
+        buttons_row = tk.Frame(self.challenge_frame, bg=colors["bg_panel"])
+        buttons_row.pack(fill='x', pady=(8, 0))
+
+        self.challenge_submit_button = tk.Button(
+            buttons_row,
+            text="Отправить результат",
+            command=self._submit_challenge_result,
+            font=fonts["button"],
+            bg=colors["button_primary"],
+            fg=colors["button_text"],
+            activebackground=colors["accent"],
+            activeforeground=colors["text_dark"],
+            relief='flat',
+            bd=0,
+            cursor='hand2',
+            highlightthickness=1,
+            highlightbackground=colors["accent_muted"],
+        )
+        self.challenge_submit_button.pack(side='left')
+
+        self.challenge_cancel_button = tk.Button(
+            buttons_row,
+            text="Отменить проверку",
+            command=self._cancel_active_challenge,
+            font=fonts["button"],
+            bg=colors["button_secondary"],
+            fg=colors["button_text"],
+            activebackground=colors["accent"],
+            activeforeground=colors["text_dark"],
+            relief='flat',
+            bd=0,
+            cursor='hand2',
+            highlightthickness=1,
+            highlightbackground=colors["accent_muted"],
+        )
+        self.challenge_cancel_button.pack(side='right')
+
+        self.challenge_frame.pack_forget()
+
         # Приветственное сообщение
         welcome_message = (
             "Добро пожаловать в мир D&D! Я ваш мастер игры. Мир уже создан и готов к приключениям. "
@@ -1637,6 +1780,256 @@ class DnDMasterGUI:
             pady=6
         )
         close_button.pack(pady=10)
+
+    def show_dice_challenge_dialog(self) -> None:
+        """Запускает окно подготовки проверки для ведущего."""
+        if self.active_dice_challenge:
+            messagebox.showinfo(
+                "Проверка уже идёт",
+                "Сначала завершите текущую проверку или отмените её, прежде чем создавать новую.",
+            )
+            return
+
+        scenario_label = self.current_scenario or "текущий сценарий"
+        dialog = DiceChallengeDialog(
+            self.root,
+            theme=self.theme,
+            fonts=self.fonts,
+            scenario_label=scenario_label,
+        )
+        result = dialog.show()
+        if not result:
+            return
+
+        self._activate_dice_challenge(result)
+
+    def _activate_dice_challenge(self, data: Dict[str, object]) -> None:
+        """Включает панель проверки и объявляет её игрокам."""
+
+        title = str(data.get("title", "Проверка"))
+        description = str(data.get("description", ""))
+        dice = str(data.get("dice", "d20")).lower()
+        dc = int(data.get("dc", 10))
+        skill = str(data.get("skill", "")).strip()
+        bonus_hint = str(data.get("bonus_hint", "")).strip()
+        success_note = str(data.get("success", "")).strip()
+        failure_note = str(data.get("failure", "")).strip()
+
+        summary_parts = [
+            f"Чтобы продвинуть сцену \"{title}\" требуется бросок {dice.upper()}.",
+            description.strip() or "Опишите, как герой выполняет задуманное действие.",
+        ]
+        if skill:
+            summary_parts.append(
+                f"Используется навык или характеристика: {skill}."
+            )
+        if bonus_hint:
+            summary_parts.append(
+                f"Подсказка для броска: {bonus_hint}."
+            )
+        summary_parts.append(
+            f"Нужно выбросить {dc} или больше. После броска введите итог в форму под чатом."
+        )
+
+        announcement = "\n".join(summary_parts)
+        self.add_to_chat("🎭 Мастер", announcement)
+        self.conversation_history.append({"role": "assistant", "content": announcement})
+
+        self.challenge_desc_var.set(announcement)
+        target_line = f"Цель проверки: {dice.upper()} ≥ {dc}."
+        self.challenge_target_var.set(target_line)
+
+        hint_lines: List[str] = []
+        if success_note:
+            hint_lines.append(f"При успехе: {success_note}")
+        if failure_note:
+            hint_lines.append(f"При провале: {failure_note}")
+        if not hint_lines:
+            hint_lines.append(
+                "Укажи итог с учётом модификаторов. Если сомневаешься, сложи бросок d20 и бонус навыка."
+            )
+        else:
+            hint_lines.append(
+                "Сообщи итоговый результат — мастер использует его, чтобы описать исход."
+            )
+        self.challenge_hint_var.set("\n".join(hint_lines))
+
+        self.challenge_result_var.set("")
+        self.challenge_result_entry.delete(0, tk.END)
+        self.challenge_frame.pack(fill='x', padx=5, pady=(8, 0))
+        self.challenge_button.config(state='disabled')
+        self.challenge_submit_button.config(state='normal', text="Отправить результат")
+        self.challenge_cancel_button.config(state='normal')
+        self.challenge_result_entry.focus_set()
+
+        data["dc"] = dc
+        data["dice"] = dice
+        self.active_dice_challenge = data
+
+    def _cancel_active_challenge(self) -> None:
+        """Сбрасывает текущую проверку."""
+        if not self.active_dice_challenge:
+            self._reset_challenge_ui()
+            return
+
+        confirm = messagebox.askyesno(
+            "Отмена проверки",
+            "Отменить текущую проверку без броска?",
+        )
+        if not confirm:
+            return
+
+        self.add_to_chat(
+            "🎭 Мастер",
+            "Проверка отменена — сцена продолжается без броска.",
+        )
+        self.conversation_history.append(
+            {
+                "role": "assistant",
+                "content": "Проверка отменена мастером без броска.",
+            }
+        )
+        self._reset_challenge_ui()
+
+    def _reset_challenge_ui(self) -> None:
+        self.active_dice_challenge = None
+        self.challenge_desc_var.set("")
+        self.challenge_target_var.set("")
+        self.challenge_hint_var.set("")
+        self.challenge_result_var.set("")
+        self.challenge_frame.pack_forget()
+        self.challenge_button.config(state='normal')
+        self.challenge_submit_button.config(state='normal', text="Отправить результат")
+        self.challenge_cancel_button.config(state='normal')
+
+    def _submit_challenge_result(self) -> None:
+        if not self.active_dice_challenge:
+            messagebox.showinfo(
+                "Нет проверки",
+                "Сначала создайте проверку, чтобы ввести результат броска.",
+            )
+            return
+
+        raw_value = self.challenge_result_var.get().strip()
+        if not raw_value:
+            messagebox.showwarning(
+                "Результат броска",
+                "Введите итог броска, например 17 или 14+3.",
+            )
+            return
+
+        total = self._parse_roll_total(raw_value)
+        if total is None:
+            messagebox.showwarning(
+                "Результат броска",
+                "Используйте только числа и +/-. Пример: 15 или 12+4.",
+            )
+            return
+
+        title = str(self.active_dice_challenge.get("title", "Проверка"))
+
+        self.add_to_chat(
+            "🎲 Бросок",
+            f"Игрок сообщает итог {total} ({raw_value}) для проверки \"{title}\".",
+        )
+
+        prompt = self._build_challenge_prompt(total)
+
+        self.challenge_submit_button.config(state='disabled', text="Ждём рассказ...")
+        self.challenge_cancel_button.config(state='disabled')
+
+        thread = threading.Thread(
+            target=self._resolve_challenge_thread,
+            args=(prompt, total),
+        )
+        thread.daemon = True
+        thread.start()
+
+    def _build_challenge_prompt(self, total: int) -> str:
+        challenge = self.active_dice_challenge or {}
+        title = str(challenge.get("title", "Проверка"))
+        description = str(challenge.get("description", ""))
+        dice = str(challenge.get("dice", "d20")).upper()
+        dc = int(challenge.get("dc", 10))
+        skill = str(challenge.get("skill", "")).strip()
+        success_note = str(challenge.get("success", "")).strip()
+        failure_note = str(challenge.get("failure", "")).strip()
+        bonus_hint = str(challenge.get("bonus_hint", "")).strip()
+
+        lines = [
+            f"Игроки выполняют проверку \"{title}\".",
+            f"Сцена: {description.strip() or 'Мастер описал проверку без подробностей.'}",
+            f"Требуемый бросок: {dice} против сложности {dc}.",
+            f"Итог игрока: {total}.",
+        ]
+        if skill:
+            lines.append(f"Задействованный навык/характеристика: {skill}.")
+        if bonus_hint:
+            lines.append(f"Игрок учитывает подсказку: {bonus_hint}.")
+
+        if total >= dc:
+            outcome_hint = "Результат равен или превышает сложность — это успех."
+            if success_note:
+                outcome_hint += f" Учти пожелание мастера: {success_note}."
+        else:
+            outcome_hint = "Результат ниже сложности — проверка провалена."
+            if failure_note:
+                outcome_hint += f" Учти пожелание мастера: {failure_note}."
+        lines.append(outcome_hint)
+        lines.append(
+            "Опиши развитие сцены, укажи, как успех или провал влияет на сюжет, и дай игрокам понятный следующий шаг."
+        )
+
+        return "\n".join(lines)
+
+    def _resolve_challenge_thread(self, prompt: str, total: int) -> None:
+        try:
+            response = self.get_master_response(prompt)
+        except Exception as error:
+            response = f"❌ Ошибка при обработке проверки: {error}"
+
+        self.root.after(
+            0,
+            lambda: self._finalize_challenge(response, total),
+        )
+
+    def _finalize_challenge(self, response: str, total: int) -> None:
+        dc = int(self.active_dice_challenge.get("dc", 10)) if self.active_dice_challenge else 10
+        dice = str(self.active_dice_challenge.get("dice", "d20")).upper() if self.active_dice_challenge else "D20"
+        title = str(self.active_dice_challenge.get("title", "Проверка")) if self.active_dice_challenge else "Проверка"
+        skill = str(self.active_dice_challenge.get("skill", "")).strip() if self.active_dice_challenge else ""
+
+        if response.startswith("❌"):
+            self.add_to_chat("⚠️ Система", response)
+            self.challenge_submit_button.config(state='normal', text="Отправить результат")
+            self.challenge_cancel_button.config(state='normal')
+            self.challenge_hint_var.set(
+                "Не удалось получить ответ мастера. Попробуйте снова отправить результат или отмените проверку."
+            )
+            return
+
+        recap_lines = [
+            f"Результат проверки \"{title}\": {total} против сложности {dc} (бросок {dice}).",
+        ]
+        if skill:
+            recap_lines.append(f"Навык/характеристика: {skill}.")
+        recap_text = " ".join(recap_lines)
+        self.add_to_chat("🎲 Бросок", recap_text)
+
+        self.add_to_chat("🎭 Мастер", response)
+
+        self._reset_challenge_ui()
+
+    def _parse_roll_total(self, raw: str) -> Optional[int]:
+        cleaned = raw.replace(" ", "")
+        if not cleaned:
+            return None
+        if not re.fullmatch(r'[+-]?\d+(?:[+-]\d+)*', cleaned):
+            return None
+        total = 0
+        for match in re.finditer(r'[+-]?\d+', cleaned):
+            total += int(match.group())
+        return total
     
     def roll_dice_from_input(self, input_widget, result_widget):
         """Бросить кости из поля ввода"""
@@ -1677,6 +2070,400 @@ class DnDMasterGUI:
     def run(self):
         """Запуск приложения"""
         self.root.mainloop()
+
+class DiceChallengeDialog:
+    """Диалог для подготовки броска с подробными подсказками."""
+
+    def __init__(
+        self,
+        parent: tk.Tk,
+        *,
+        theme: Dict[str, str],
+        fonts: Dict[str, tuple],
+        scenario_label: str,
+    ) -> None:
+        self.parent = parent
+        self.theme = theme
+        self.fonts = fonts
+        self.scenario_label = scenario_label
+        self.result: Optional[Dict[str, object]] = None
+
+        self.window = tk.Toplevel(parent)
+        self.window.title("Настройка проверки и броска костей")
+        self.window.configure(bg=self.theme["bg_dark"])
+        self.window.transient(parent)
+        self.window.grab_set()
+        self.window.resizable(True, True)
+        self.window.minsize(720, 640)
+        self.window.protocol("WM_DELETE_WINDOW", self._on_cancel)
+
+        self.title_var = tk.StringVar()
+        self.skill_var = tk.StringVar()
+        self.dice_var = tk.StringVar(value="d20")
+        self.dc_var = tk.StringVar(value="15")
+        self.bonus_hint_var = tk.StringVar()
+
+        self._build_ui()
+
+    def show(self) -> Optional[Dict[str, object]]:
+        self.window.wait_window()
+        return self.result
+
+    def _build_ui(self) -> None:
+        colors = self.theme
+        fonts = self.fonts
+
+        container = tk.Frame(
+            self.window,
+            bg=colors["bg_panel"],
+            padx=20,
+            pady=20,
+            highlightbackground=colors["accent_muted"],
+            highlightthickness=1,
+        )
+        container.pack(fill="both", expand=True, padx=24, pady=24)
+
+        heading = tk.Label(
+            container,
+            text=(
+                "Укажи проверку, которую нужно пройти в сценарии"
+                f" '{self.scenario_label}'.\n"
+                "Игроки увидят все шаги сразу: какая сцена, какие кости бросить,"
+                " какой порог успеха и что делать после броска."
+            ),
+            bg=colors["bg_panel"],
+            fg=colors["accent_light"],
+            font=fonts["subtitle"],
+            justify="left",
+            wraplength=640,
+        )
+        heading.pack(anchor="w", pady=(0, 12))
+
+        intro = tk.Label(
+            container,
+            text=(
+                "Подсказки для ведущего:\n"
+                "• Назови действие героя и что поставлено на кон.\n"
+                "• Укажи, какие кости бросать (обычно d20) и какой результат нужен.\n"
+                "• Подскажи, какой модификатор добавить (например, бонус Убеждения).\n"
+                "• Опиши, что произойдёт при успехе и при провале, чтобы мастер смог ярко рассказать итог."
+            ),
+            bg=colors["bg_panel"],
+            fg=colors["text_light"],
+            font=fonts["text"],
+            justify="left",
+            wraplength=640,
+        )
+        intro.pack(anchor="w", pady=(0, 16))
+
+        self._add_entry(
+            container,
+            "Название проверки",
+            (
+                "Как коротко назвать ситуацию. Примеры: 'Убедить стражника',"
+                " 'Перепрыгнуть пропасть', 'Расшифровать древний текст'."
+            ),
+            self.title_var,
+        )
+
+        self.description_text = self._add_text(
+            container,
+            "Описание сцены",
+            (
+                "Расскажи, что происходит: кто действует, где, зачем."
+                " Пример: 'Ночью у ворот замка герой пытается уговорить сонного стражника"
+                " пропустить отряд внутрь, пока тревога не поднята'."
+            ),
+            height=5,
+        )
+
+        self._add_entry(
+            container,
+            "Используемый навык или характеристика",
+            (
+                "Подсказка для игрока: 'Харизма (Убеждение)', 'Ловкость (Акробатика)',"
+                " 'Мудрость (Внимательность)'. Это поможет выбрать нужный модификатор."
+            ),
+            self.skill_var,
+        )
+
+        dice_frame = tk.Frame(container, bg=colors["bg_panel"])
+        dice_frame.pack(fill="x", pady=(12, 4))
+
+        dice_label = tk.Label(
+            dice_frame,
+            text="Кости для броска",
+            bg=colors["bg_panel"],
+            fg=colors["accent_light"],
+            font=fonts["subtitle"],
+            anchor="w",
+        )
+        dice_label.pack(anchor="w")
+
+        dice_hint = tk.Label(
+            dice_frame,
+            text=(
+                "Например: d20 (стандартная проверка), 2d6+1 (два шестигранника плюс бонус),"
+                " d20+2 (если всегда добавляется фиксированный бонус)."
+            ),
+            bg=colors["bg_panel"],
+            fg=colors["text_light"],
+            font=fonts["text"],
+            justify="left",
+            wraplength=640,
+        )
+        dice_hint.pack(anchor="w", pady=(2, 4))
+
+        dice_row = tk.Frame(dice_frame, bg=colors["bg_panel"])
+        dice_row.pack(fill="x")
+
+        tk.Entry(
+            dice_row,
+            textvariable=self.dice_var,
+            bg=colors["bg_input"],
+            fg=colors["text_dark"],
+            insertbackground=colors["text_dark"],
+        ).pack(side="left", padx=(0, 8))
+
+        dc_label = tk.Label(
+            dice_row,
+            text="Порог успеха (DC)",
+            bg=colors["bg_panel"],
+            fg=colors["accent_light"],
+            font=fonts["subtitle"],
+        )
+        dc_label.pack(side="left", padx=(12, 6))
+
+        tk.Entry(
+            dice_row,
+            textvariable=self.dc_var,
+            width=6,
+            bg=colors["bg_input"],
+            fg=colors["text_dark"],
+            insertbackground=colors["text_dark"],
+        ).pack(side="left")
+
+        dc_hint = tk.Label(
+            dice_frame,
+            text=(
+                "Ориентируйся на таблицу D&D 5e: 5 — очень легко, 10 — легко, 15 — средне,"
+                " 20 — сложно, 25 — очень сложно, 30 — почти невозможно."
+            ),
+            bg=colors["bg_panel"],
+            fg=colors["text_light"],
+            font=fonts["text"],
+            justify="left",
+            wraplength=640,
+        )
+        dc_hint.pack(anchor="w", pady=(4, 10))
+
+        self._add_entry(
+            container,
+            "Как игроку посчитать итог",
+            (
+                "Например: 'Брось d20 и добавь модификатор Харизмы (+2) и бонус Убеждения (+3)'."
+                " Этот текст увидит игрок перед вводом результата."
+            ),
+            self.bonus_hint_var,
+        )
+
+        self.success_text = self._add_text(
+            container,
+            "Что произойдёт при успехе",
+            (
+                "Коротко опиши желаемый эффект. Пример: 'Стражник смягчается, открывает калитку"
+                " и даже обещает отвлечь капитана'."
+            ),
+            height=4,
+        )
+
+        self.failure_text = self._add_text(
+            container,
+            "Что случится при провале",
+            (
+                "Пример: 'Стражник настораживается, поднимает тревогу и вызывает смену'"
+                " или 'Перекладина обрушивается, герой получает 1к6 урона'."
+            ),
+            height=4,
+        )
+
+        buttons = tk.Frame(container, bg=colors["bg_panel"])
+        buttons.pack(fill="x", pady=(16, 0))
+
+        tk.Button(
+            buttons,
+            text="Сохранить проверку",
+            command=self._on_save,
+            font=fonts["button"],
+            bg=colors["button_primary"],
+            fg=colors["button_text"],
+            activebackground=colors["accent"],
+            activeforeground=colors["text_dark"],
+            relief='flat',
+            bd=0,
+            cursor='hand2',
+            padx=16,
+            pady=8,
+        ).pack(side="left")
+
+        tk.Button(
+            buttons,
+            text="Отмена",
+            command=self._on_cancel,
+            font=fonts["button"],
+            bg=colors["button_secondary"],
+            fg=colors["button_text"],
+            activebackground=colors["accent"],
+            activeforeground=colors["text_dark"],
+            relief='flat',
+            bd=0,
+            cursor='hand2',
+            padx=16,
+            pady=8,
+        ).pack(side="right")
+
+        self.title_var.set("Убедить стражника")
+        self.skill_var.set("Харизма (Убеждение)")
+
+    def _add_entry(
+        self,
+        parent: tk.Widget,
+        label_text: str,
+        hint_text: str,
+        variable: tk.StringVar,
+    ) -> None:
+        frame = tk.Frame(parent, bg=self.theme["bg_panel"])
+        frame.pack(fill="x", pady=(10, 4))
+
+        tk.Label(
+            frame,
+            text=label_text,
+            bg=self.theme["bg_panel"],
+            fg=self.theme["accent_light"],
+            font=self.fonts["subtitle"],
+            anchor="w",
+        ).pack(anchor="w")
+
+        tk.Label(
+            frame,
+            text=hint_text,
+            bg=self.theme["bg_panel"],
+            fg=self.theme["text_light"],
+            font=self.fonts["text"],
+            justify="left",
+            wraplength=640,
+        ).pack(anchor="w", pady=(2, 4))
+
+        tk.Entry(
+            frame,
+            textvariable=variable,
+            bg=self.theme["bg_input"],
+            fg=self.theme["text_dark"],
+            insertbackground=self.theme["text_dark"],
+        ).pack(fill="x")
+
+    def _add_text(
+        self,
+        parent: tk.Widget,
+        label_text: str,
+        hint_text: str,
+        *,
+        height: int,
+    ) -> tk.Text:
+        frame = tk.Frame(parent, bg=self.theme["bg_panel"])
+        frame.pack(fill="x", pady=(12, 4))
+
+        tk.Label(
+            frame,
+            text=label_text,
+            bg=self.theme["bg_panel"],
+            fg=self.theme["accent_light"],
+            font=self.fonts["subtitle"],
+            anchor="w",
+        ).pack(anchor="w")
+
+        tk.Label(
+            frame,
+            text=hint_text,
+            bg=self.theme["bg_panel"],
+            fg=self.theme["text_light"],
+            font=self.fonts["text"],
+            justify="left",
+            wraplength=640,
+        ).pack(anchor="w", pady=(2, 4))
+
+        text_widget = tk.Text(
+            frame,
+            height=height,
+            wrap=tk.WORD,
+            bg=self.theme["bg_input"],
+            fg=self.theme["text_dark"],
+            insertbackground=self.theme["text_dark"],
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=self.theme["accent_muted"],
+        )
+        text_widget.pack(fill="x")
+        return text_widget
+
+    def _on_cancel(self) -> None:
+        self.result = None
+        self.window.destroy()
+
+    def _on_save(self) -> None:
+        title = self.title_var.get().strip()
+        if not title:
+            messagebox.showwarning("Проверка", "Название проверки не может быть пустым.")
+            return
+
+        description = self.description_text.get("1.0", tk.END).strip()
+        if len(description) < 10:
+            messagebox.showwarning(
+                "Проверка",
+                "Опиши сцену несколькими предложениями, чтобы игроки понимали контекст.",
+            )
+            return
+
+        dice = self.dice_var.get().strip().lower()
+        if not re.fullmatch(r"\d*d\d+(?:[+-]\d+)?", dice):
+            messagebox.showwarning(
+                "Проверка",
+                "Формат костей должен выглядеть как d20, 2d6 или d20+2.",
+            )
+            return
+
+        try:
+            dc = int(self.dc_var.get().strip())
+        except ValueError:
+            messagebox.showwarning(
+                "Проверка",
+                "Порог успеха указывается целым числом, например 15.",
+            )
+            return
+
+        if not 1 <= dc <= 40:
+            messagebox.showwarning(
+                "Проверка",
+                "Порог успеха должен быть от 1 до 40 (обычно 5-30).",
+            )
+            return
+
+        skill = self.skill_var.get().strip()
+        bonus_hint = self.bonus_hint_var.get().strip()
+        success = self.success_text.get("1.0", tk.END).strip()
+        failure = self.failure_text.get("1.0", tk.END).strip()
+
+        self.result = {
+            "title": title,
+            "description": description,
+            "dice": dice,
+            "dc": dc,
+            "skill": skill,
+            "bonus_hint": bonus_hint,
+            "success": success,
+            "failure": failure,
+        }
+        self.window.destroy()
 
 class FirstSceneDialog:
     """Модальное окно с подсказками для описания стартовой сцены."""
