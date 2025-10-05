@@ -304,9 +304,15 @@ class DnDMasterGUI:
             return value
 
     def _collect_member_data(self, index: int, existing_ids: Set[str]) -> PartyMember:
-        name = self._prompt_non_empty("Имя персонажа: ")
-        role = self._prompt_non_empty("Роль персонажа: ")
-        concept = self._prompt_non_empty("Коротко о концепте: ")
+        name = self._prompt_non_empty(
+            "Имя персонажа (пример: Арин, Лисса, Мракозор):"
+        )
+        role = self._prompt_non_empty(
+            "Роль персонажа (пример: разведчик, лекарь, мечник):"
+        )
+        concept = self._prompt_non_empty(
+            "Коротко опиши концепт (1 фраза, пример: изгнанный дворянин в поиске искупления):"
+        )
 
         stats: Dict[str, int] = {}
         stat_order = [
@@ -318,23 +324,27 @@ class DnDMasterGUI:
         ]
         for key, label in stat_order:
             stats[key] = self._prompt_int(
-                f"{label} ({-1} до {3}): ",
+                f"{label} ({-1} до {3}; 0 — среднее, 3 — выдающееся):",
                 minimum=-1,
                 maximum=3,
             )
 
-        hp = self._prompt_int("HP (8-14): ", minimum=8, maximum=14)
+        hp = self._prompt_int(
+            "HP (8-14; 8 — хрупкий, 14 — очень выносливый):",
+            minimum=8,
+            maximum=14,
+        )
 
         traits = self._prompt_fixed_list(
-            "Укажи две черты характера (через запятую): ",
+            "Укажи две черты характера (через запятую, пример: хладнокровный, благородный):",
             expected_count=2,
         )
         loadout = self._prompt_fixed_list(
-            "Укажи два предмета стартового снаряжения (через запятую): ",
+            "Укажи два предмета стартового снаряжения (через запятую, пример: короткий меч, верёвка):",
             expected_count=2,
         )
         tags = self._prompt_tags(
-            "Укажи 1-2 тега персонажа (через запятую): ",
+            "Укажи 1-2 тега персонажа (через запятую, пример: stealth, healer):",
             minimum=1,
             maximum=2,
         )
