@@ -40,8 +40,8 @@ class DnDMasterGUI:
             "button_primary": "#7b3f00",
             "button_secondary": "#5b2d10",
             "button_danger": "#7d1f1a",
-            "button_text": "#f8efdb",
-            "text_light": "#f5e9cf",
+            "button_text": "#000000",
+            "text_light": "#6f6c66",
             "text_dark": "#2d1b10",
             "text_muted": "#d2b792",
             "dice_highlight": "#3f6e88"
@@ -102,7 +102,7 @@ class DnDMasterGUI:
 
     def configure_theme(self):
         """Настраивает базовое оформление окна."""
-        self.root.geometry("900x800")
+        self.root.geometry("1200x800")
         self.root.configure(bg=self.theme["bg_dark"])
         self.root.option_add("*Font", self.fonts["text"])
         self.root.option_add("*Foreground", self.theme["text_light"])
