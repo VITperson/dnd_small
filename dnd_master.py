@@ -6,7 +6,9 @@
 import json
 import os
 import sys
+
 from typing import Dict, List, Optional, Set
+
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -15,6 +17,7 @@ import yaml
 import re
 from dice_system import dice_roller
 from party_builder import PartyBuilder, PartyMember, PartyValidationError
+
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -37,6 +40,7 @@ class DnDMaster:
         self.party_store = self.load_party_state()
         self.current_scenario: Optional[str] = None
         self.party_state: Optional[Dict[str, object]] = None
+
         
         # Загружаем правила игры
         self.load_game_rules()
@@ -94,6 +98,7 @@ class DnDMaster:
         try:
             with open(self.party_state_file, 'w', encoding='utf-8') as f:
                 json.dump(self.party_store, f, ensure_ascii=False, indent=2)
+
         except Exception as error:
             print(f"❌ Не удалось сохранить партию: {error}")
 
@@ -161,14 +166,12 @@ class DnDMaster:
         builder.coin = coin
         builder.rations = rations
         builder.party_tags = party_tags
-
         payload = builder.build_payload()
 
         json_text = json.dumps(payload, ensure_ascii=False, indent=2)
         print(json_text)
         for line in payload["party_compact"]:
             print(line)
-
         return payload
 
     def _ensure_scenario_selected(self) -> None:
